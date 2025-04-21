@@ -1,0 +1,4 @@
+requests
+psutil
+PyQt6
+packaging 
