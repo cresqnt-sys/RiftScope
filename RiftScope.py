@@ -60,7 +60,7 @@ QPushButton:disabled {{
 class Worker(QThread):
     update_status_signal = pyqtSignal(str)
     finished_signal = pyqtSignal()
-    webhook_signal = pyqtSignal(str, str, str, int)
+    webhook_signal = pyqtSignal(str, str, str, int, str)
 
     def __init__(self, func, *args, **kwargs):
         super().__init__()
@@ -78,7 +78,7 @@ class Worker(QThread):
             self.finished_signal.emit()
 
 class FishstrapWatcherApp(QMainWindow):
-    APP_VERSION = "1.0.0-Alpha" 
+    APP_VERSION = "1.0.0-Alpha2" 
     REPO_URL = "cresqnt-sys/RiftScope"
 
     update_prompt_signal = pyqtSignal(str, str)
@@ -119,8 +119,31 @@ class FishstrapWatcherApp(QMainWindow):
             config_dir = os.path.dirname(os.path.abspath(__file__)) 
             self.config_file = os.path.join(config_dir, "config.json")
 
+        # --- First Launch Check ---
+        first_launch = not os.path.exists(self.config_file)
+        if first_launch:
+            # Use a temporary QWidget parent if the main window isn't fully ready
+            # This might not be strictly necessary but is safer practice early in __init__
+            temp_parent = QWidget() 
+            QMessageBox.warning(
+                temp_parent, 
+                "First Time Setup Notice",
+                "Important: For RiftScope to correctly configure Roblox logging \n"
+                "on first launch, **Roblox must be closed before starting RiftScope.**\n\n"
+                "If Roblox is currently open, please:\n"
+                "1. Click OK on this message.\n"
+                "2. Close RiftScope.\n"
+                "3. Close Roblox.\n"
+                "4. Relaunch RiftScope (before starting Roblox).\n\n"
+                "This initial setup ensures detection works correctly. You only need to do this once.",
+                QMessageBox.StandardButton.Ok
+            )
+            temp_parent.deleteLater() # Clean up the temporary widget
+        # --- End First Launch Check ---
+
         self.load_config()
         self.build_ui()
+        self.apply_roblox_fastflags()
 
         self.setup_keybinds()
 
@@ -175,6 +198,14 @@ class FishstrapWatcherApp(QMainWindow):
             self.pslink_entry.setText(self.ps_link)
         input_layout.addWidget(self.pslink_entry)
 
+        self.ping_id_label = QLabel("Discord Ping ID (User/Role - Optional):")
+        input_layout.addWidget(self.ping_id_label)
+        self.ping_id_entry = QLineEdit()
+        self.ping_id_entry.setPlaceholderText("Enter <@USER_ID> or <@&ROLE_ID>")
+        if hasattr(self, 'ping_id') and self.ping_id:
+            self.ping_id_entry.setText(self.ping_id)
+        input_layout.addWidget(self.ping_id_entry)
+
         scanner_layout.addWidget(input_frame)
 
         button_frame = QFrame()
@@ -220,13 +251,6 @@ class FishstrapWatcherApp(QMainWindow):
         secondary_button_layout.addWidget(self.lock_button)
 
         scanner_layout.addWidget(secondary_button_frame)
-
-        self.status_label = QLabel("Ready to scan...")
-        status_font = QFont("Segoe UI", 9)
-        status_font.setItalic(True)
-        self.status_label.setFont(status_font)
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        scanner_layout.addWidget(self.status_label)
 
         scanner_layout.addStretch() 
 
@@ -389,13 +413,58 @@ class FishstrapWatcherApp(QMainWindow):
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         formatted_log_message = f"[{timestamp}] {message}"
 
-        self.status_label.setText(message) 
-
         if hasattr(self, 'log_console'):
             self.log_console.append(formatted_log_message)
             self.log_console.ensureCursorVisible() 
 
         print(formatted_log_message) 
+
+    def apply_roblox_fastflags(self):
+        """Finds the RobloxPlayerBeta folder and applies FastFlag settings."""
+        local_app_data = os.getenv('LOCALAPPDATA')
+        if not local_app_data:
+            self.update_status("Error: LOCALAPPDATA environment variable not found.")
+            return
+
+        roblox_versions_path = os.path.join(local_app_data, 'Roblox', 'Versions')
+        if not os.path.isdir(roblox_versions_path):
+            self.update_status(f"Error: Roblox versions directory not found at {roblox_versions_path}")
+            return
+
+        roblox_player_folder = None
+        try:
+            for version_folder in os.listdir(roblox_versions_path):
+                potential_path = os.path.join(roblox_versions_path, version_folder)
+                if os.path.isdir(potential_path):
+                    exe_path = os.path.join(potential_path, 'RobloxPlayerBeta.exe')
+                    if os.path.isfile(exe_path):
+                        roblox_player_folder = potential_path
+                        break # Found the correct folder
+        except OSError as e:
+            self.update_status(f"Error accessing Roblox versions directory: {e}")
+            return
+
+        if not roblox_player_folder:
+            self.update_status("Error: Could not find RobloxPlayerBeta.exe in any version folder.")
+            return
+
+        client_settings_path = os.path.join(roblox_player_folder, 'ClientSettings')
+        json_file_path = os.path.join(client_settings_path, 'ClientAppSettings.json')
+
+        fastflags_config = {
+            "FStringDebugLuaLogLevel": "trace",
+            "FStringDebugLuaLogPattern": "ExpChat/mountClientApp"
+        }
+
+        try:
+            os.makedirs(client_settings_path, exist_ok=True)
+            with open(json_file_path, 'w') as f:
+                json.dump(fastflags_config, f, indent=2) # Use indent for readability
+            self.update_status(f"Successfully applied FastFlags to: {json_file_path}")
+        except OSError as e:
+            self.update_status(f"Error creating ClientSettings or writing JSON: {e}")
+        except Exception as e:
+            self.update_status(f"An unexpected error occurred while applying FastFlags: {e}")
 
     def load_config(self):
         try:
@@ -404,18 +473,23 @@ class FishstrapWatcherApp(QMainWindow):
                     config = json.load(f)
                     self.webhook_url = config.get('webhook_url', '')
                     self.ps_link = config.get('ps_link', '')
+                    self.ping_id = config.get('ping_id', '')
 
                     if hasattr(self, 'webhook_entry'):
                          self.webhook_entry.setText(self.webhook_url)
                     if hasattr(self, 'pslink_entry'):
                          self.pslink_entry.setText(self.ps_link)
+                    if hasattr(self, 'ping_id_entry'):
+                         self.ping_id_entry.setText(self.ping_id)
             else:
                 self.webhook_url = ''
                 self.ps_link = ''
+                self.ping_id = ''
         except Exception as e:
             print(f"Error loading config: {e}")
             self.webhook_url = ''
             self.ps_link = ''
+            self.ping_id = ''
 
     def save_config(self):
         try:
@@ -423,8 +497,9 @@ class FishstrapWatcherApp(QMainWindow):
             os.makedirs(config_dir, exist_ok=True)
 
             config = {
-                'webhook_url': self.webhook_entry.text().strip(), 
-                'ps_link': self.pslink_entry.text().strip() 
+                'webhook_url': self.webhook_entry.text().strip(),
+                'ps_link': self.pslink_entry.text().strip() ,
+                'ping_id': self.ping_id_entry.text().strip()
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=4)
@@ -502,7 +577,7 @@ class FishstrapWatcherApp(QMainWindow):
                         return None 
         return None
 
-    def send_webhook(self, title, description, image_url=None, color=0x7289DA, worker_instance=None):
+    def send_webhook(self, title, description, image_url=None, color=0x7289DA, ping_content=None, worker_instance=None):
 
         webhook_url = self.webhook_entry.text().strip() 
         if not webhook_url:
@@ -555,6 +630,8 @@ class FishstrapWatcherApp(QMainWindow):
             })
 
         payload = {"embeds": [embed]}
+        if ping_content:
+            payload["content"] = ping_content
 
         try:
 
@@ -593,7 +670,8 @@ class FishstrapWatcherApp(QMainWindow):
                 "▶️ RiftScope Started",
                 "RiftScope is now monitoring for rare rifts!",
                 None,
-                0x7289DA
+                0x7289DA,
+                None
             )
         self.last_line_time = time.time()
         self.last_timestamp = None 
@@ -656,11 +734,13 @@ class FishstrapWatcherApp(QMainWindow):
                     if "🔮" in line: 
                         if self.monitor_thread:
                             self.monitor_thread.update_status_signal.emit("✨ Royal chest detected!")
+                            ping_id = self.ping_id_entry.text().strip()
                             self.monitor_thread.webhook_signal.emit(
                                 "✨ ROYAL CHEST DETECTED! ✨",
                                 f"A royal chest has been found in the chat!", 
                                 self.royal_image_url,
-                                0x9b59b6
+                                0x9b59b6,
+                                ping_id if ping_id else None
                             )
 
                     elif "aura" in line.lower(): 
@@ -670,7 +750,8 @@ class FishstrapWatcherApp(QMainWindow):
                                 "🌟 AURA EGG DETECTED! 🌟",
                                 f"An aura egg has been found in the chat!", 
                                 self.aura_image_url,
-                                0x3498db
+                                0x3498db,
+                                "@everyone"
                             )
 
                     if timestamp:
@@ -687,7 +768,8 @@ class FishstrapWatcherApp(QMainWindow):
                                 "⚠️ Roblox Closed",
                                 "No new log lines detected recently and Roblox process not found.",
                                 None,
-                                0xe74c3c
+                                0xe74c3c,
+                                None
                             )
                         self.last_line_time = time.time() 
 
@@ -727,6 +809,7 @@ class FishstrapWatcherApp(QMainWindow):
         self.lock_button.setEnabled(False) 
         self.webhook_entry.setEnabled(False) 
         self.pslink_entry.setEnabled(False)
+        self.ping_id_entry.setEnabled(False)
         self.update_status("🔍 Scanning started...")
 
     def stop_macro(self):
@@ -743,7 +826,8 @@ class FishstrapWatcherApp(QMainWindow):
             "⏹️ RiftScope Stopped",
             "RiftScope has been stopped manually.",
             None,
-            0x95a5a6
+            0x95a5a6,
+            None
         )
 
     def on_monitor_finished(self):
@@ -756,6 +840,7 @@ class FishstrapWatcherApp(QMainWindow):
         self.lock_button.setEnabled(True)
         self.webhook_entry.setEnabled(True)
         self.pslink_entry.setEnabled(True)
+        self.ping_id_entry.setEnabled(True)
         self.update_status("Scanner stopped. Ready to scan again.")
 
     def closeEvent(self, event):
