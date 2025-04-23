@@ -10,7 +10,7 @@ import packaging.version
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                            QFrame, QMessageBox, QStyleFactory, QTabWidget, 
-                           QTextEdit) 
+                           QTextEdit, QComboBox) 
 from PyQt6.QtGui import QPalette, QColor, QFont, QKeySequence, QShortcut, QIcon 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal 
 from datetime import datetime
@@ -77,8 +77,8 @@ class Worker(QThread):
         finally:
             self.finished_signal.emit()
 
-class FishstrapWatcherApp(QMainWindow):
-    APP_VERSION = "1.0.0-Alpha2" 
+class RiftScopeApp(QMainWindow):
+    APP_VERSION = "1.0.1-Beta" 
     REPO_URL = "cresqnt-sys/RiftScope"
 
     update_prompt_signal = pyqtSignal(str, str)
@@ -135,7 +135,9 @@ class FishstrapWatcherApp(QMainWindow):
                 "2. Close RiftScope.\n"
                 "3. Close Roblox.\n"
                 "4. Relaunch RiftScope (before starting Roblox).\n\n"
-                "This initial setup ensures detection works correctly. You only need to do this once.",
+                "This initial setup ensures detection works correctly with any Roblox launcher \n"
+                "(Fishstrap, Bloxstrap, or standard Roblox).\n"
+                "You only need to do this once.",
                 QMessageBox.StandardButton.Ok
             )
             temp_parent.deleteLater() # Clean up the temporary widget
@@ -181,6 +183,36 @@ class FishstrapWatcherApp(QMainWindow):
         input_layout = QVBoxLayout(input_frame)
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(5)
+
+        # Add Roblox launcher selection
+        self.launcher_label = QLabel("Roblox Launcher:")
+        input_layout.addWidget(self.launcher_label)
+        
+        launcher_frame = QFrame()
+        launcher_layout = QHBoxLayout(launcher_frame)
+        launcher_layout.setContentsMargins(0, 0, 0, 0)
+        launcher_layout.setSpacing(5)
+        
+        self.launcher_combo = QComboBox()
+        self.launcher_combo.addItem("Auto (Detect)")
+        self.launcher_combo.addItem("Fishstrap")
+        self.launcher_combo.addItem("Bloxstrap")
+        self.launcher_combo.addItem("Roblox")
+        
+        if hasattr(self, 'launcher_choice'):
+            index = self.launcher_combo.findText(self.launcher_choice)
+            if index >= 0:
+                self.launcher_combo.setCurrentIndex(index)
+            elif self.launcher_choice == "Auto":
+                self.launcher_combo.setCurrentIndex(0)
+        
+        launcher_layout.addWidget(self.launcher_combo)
+        
+        self.launcher_status = QLabel("")
+        self.launcher_status.setStyleSheet("color: #43b581;")
+        launcher_layout.addWidget(self.launcher_status)
+        
+        input_layout.addWidget(launcher_frame)
 
         self.webhook_label = QLabel("Discord Webhook URL:")
         input_layout.addWidget(self.webhook_label)
@@ -420,51 +452,66 @@ class FishstrapWatcherApp(QMainWindow):
         print(formatted_log_message) 
 
     def apply_roblox_fastflags(self):
-        """Finds the RobloxPlayerBeta folder and applies FastFlag settings."""
+        """Finds Roblox installations and applies FastFlag settings to all of them."""
         local_app_data = os.getenv('LOCALAPPDATA')
         if not local_app_data:
             self.update_status("Error: LOCALAPPDATA environment variable not found.")
             return
 
-        roblox_versions_path = os.path.join(local_app_data, 'Roblox', 'Versions')
-        if not os.path.isdir(roblox_versions_path):
-            self.update_status(f"Error: Roblox versions directory not found at {roblox_versions_path}")
-            return
+        # Define paths for different Roblox launchers
+        launcher_paths = [
+            ('Roblox', os.path.join(local_app_data, 'Roblox', 'Versions')),
+            ('Bloxstrap', os.path.join(local_app_data, 'Bloxstrap', 'Roblox', 'Versions')),
+            ('Fishstrap', os.path.join(local_app_data, 'Fishstrap', 'Roblox', 'Versions'))
+        ]
 
-        roblox_player_folder = None
-        try:
-            for version_folder in os.listdir(roblox_versions_path):
-                potential_path = os.path.join(roblox_versions_path, version_folder)
-                if os.path.isdir(potential_path):
-                    exe_path = os.path.join(potential_path, 'RobloxPlayerBeta.exe')
-                    if os.path.isfile(exe_path):
-                        roblox_player_folder = potential_path
-                        break # Found the correct folder
-        except OSError as e:
-            self.update_status(f"Error accessing Roblox versions directory: {e}")
-            return
+        installed_count = 0
 
-        if not roblox_player_folder:
-            self.update_status("Error: Could not find RobloxPlayerBeta.exe in any version folder.")
-            return
+        for launcher_name, versions_path in launcher_paths:
+            if not os.path.isdir(versions_path):
+                self.update_status(f"Info: {launcher_name} versions directory not found at {versions_path}")
+                continue
 
-        client_settings_path = os.path.join(roblox_player_folder, 'ClientSettings')
-        json_file_path = os.path.join(client_settings_path, 'ClientAppSettings.json')
-
-        fastflags_config = {
-            "FStringDebugLuaLogLevel": "trace",
-            "FStringDebugLuaLogPattern": "ExpChat/mountClientApp"
-        }
-
-        try:
-            os.makedirs(client_settings_path, exist_ok=True)
-            with open(json_file_path, 'w') as f:
-                json.dump(fastflags_config, f, indent=2) # Use indent for readability
-            self.update_status(f"Successfully applied FastFlags to: {json_file_path}")
-        except OSError as e:
-            self.update_status(f"Error creating ClientSettings or writing JSON: {e}")
-        except Exception as e:
-            self.update_status(f"An unexpected error occurred while applying FastFlags: {e}")
+            try:
+                roblox_folders = []
+                for version_folder in os.listdir(versions_path):
+                    potential_path = os.path.join(versions_path, version_folder)
+                    if os.path.isdir(potential_path):
+                        exe_path = os.path.join(potential_path, 'RobloxPlayerBeta.exe')
+                        if os.path.isfile(exe_path):
+                            roblox_folders.append(potential_path)
+                
+                if not roblox_folders:
+                    self.update_status(f"Info: No RobloxPlayerBeta.exe found in {launcher_name} versions folder.")
+                    continue
+                
+                # Apply to all found Roblox installations for this launcher
+                for folder in roblox_folders:
+                    client_settings_path = os.path.join(folder, 'ClientSettings')
+                    json_file_path = os.path.join(client_settings_path, 'ClientAppSettings.json')
+                    
+                    fastflags_config = {
+                        "FStringDebugLuaLogLevel": "trace",
+                        "FStringDebugLuaLogPattern": "ExpChat/mountClientApp"
+                    }
+                    
+                    try:
+                        os.makedirs(client_settings_path, exist_ok=True)
+                        with open(json_file_path, 'w') as f:
+                            json.dump(fastflags_config, f, indent=2)
+                        installed_count += 1
+                        self.update_status(f"Applied FastFlags to {launcher_name} at: {json_file_path}")
+                    except Exception as e:
+                        self.update_status(f"Error applying FastFlags to {launcher_name}: {e}")
+                
+            except OSError as e:
+                self.update_status(f"Error accessing {launcher_name} versions directory: {e}")
+                continue
+        
+        if installed_count > 0:
+            self.update_status(f"Successfully applied FastFlags to {installed_count} Roblox installation(s)")
+        else:
+            self.update_status("Warning: Could not apply FastFlags to any Roblox installation")
 
     def load_config(self):
         try:
@@ -474,6 +521,7 @@ class FishstrapWatcherApp(QMainWindow):
                     self.webhook_url = config.get('webhook_url', '')
                     self.ps_link = config.get('ps_link', '')
                     self.ping_id = config.get('ping_id', '')
+                    self.launcher_choice = config.get('launcher_choice', 'Auto')
 
                     if hasattr(self, 'webhook_entry'):
                          self.webhook_entry.setText(self.webhook_url)
@@ -485,11 +533,13 @@ class FishstrapWatcherApp(QMainWindow):
                 self.webhook_url = ''
                 self.ps_link = ''
                 self.ping_id = ''
+                self.launcher_choice = 'Auto'
         except Exception as e:
             print(f"Error loading config: {e}")
             self.webhook_url = ''
             self.ps_link = ''
             self.ping_id = ''
+            self.launcher_choice = 'Auto'
 
     def save_config(self):
         try:
@@ -499,7 +549,8 @@ class FishstrapWatcherApp(QMainWindow):
             config = {
                 'webhook_url': self.webhook_entry.text().strip(),
                 'ps_link': self.pslink_entry.text().strip() ,
-                'ping_id': self.ping_id_entry.text().strip()
+                'ping_id': self.ping_id_entry.text().strip(),
+                'launcher_choice': self.launcher_combo.currentText()
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=4)
@@ -508,10 +559,76 @@ class FishstrapWatcherApp(QMainWindow):
             self.update_status(f"Error saving config: {e}")
 
     def get_log_dir(self):
+        """Returns the appropriate log directory based on available Roblox launchers."""
         home = os.path.expanduser("~")
-        log_dir = os.path.join(home, "AppData", "Local", "Fishstrap", "Logs")
-
-        return log_dir
+        
+        # Define potential log paths for different launchers
+        log_paths = {
+            "Fishstrap": os.path.join(home, "AppData", "Local", "Fishstrap", "Logs"),
+            "Bloxstrap": os.path.join(home, "AppData", "Local", "Roblox", "Logs"),  # Bloxstrap uses standard Roblox logs
+            "Roblox": os.path.join(home, "AppData", "Local", "Roblox", "Logs")
+        }
+        
+        # Check for user-selected launcher choice
+        if hasattr(self, 'launcher_combo'):
+            choice = self.launcher_combo.currentText()
+            if choice in log_paths:
+                return log_paths[choice]
+            elif choice == "Auto (Detect)":
+                # Will proceed with auto-detection
+                pass
+        
+        # Auto-detection logic - check multiple paths
+        valid_paths = []
+        for launcher, path in log_paths.items():
+            if os.path.isdir(path):
+                try:
+                    if any(os.path.isfile(os.path.join(path, f)) for f in os.listdir(path)):
+                        valid_paths.append((launcher, path))
+                        # Update status label if we have the UI
+                        if hasattr(self, 'launcher_status'):
+                            self.launcher_status.setText(f"Found {launcher} logs")
+                except Exception:
+                    continue
+        
+        # If Roblox is running, prioritize the launcher with the most recent log file
+        if self.is_roblox_running() and valid_paths:
+            most_recent = None
+            most_recent_time = 0
+            most_recent_launcher = None
+            
+            for launcher, path in valid_paths:
+                try:
+                    files = [os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
+                    if files:
+                        latest = max(files, key=os.path.getmtime)
+                        mod_time = os.path.getmtime(latest)
+                        if mod_time > most_recent_time:
+                            most_recent = path
+                            most_recent_time = mod_time
+                            most_recent_launcher = launcher
+                except Exception:
+                    continue
+            
+            if most_recent:
+                # Update status label if we have the UI
+                if hasattr(self, 'launcher_status'):
+                    self.launcher_status.setText(f"Active: {most_recent_launcher}")
+                return most_recent
+        
+        # Use any valid path, prioritize in order: Fishstrap, Bloxstrap, Roblox
+        for launcher_name in ["Fishstrap", "Bloxstrap", "Roblox"]:
+            for launcher, path in valid_paths:
+                if launcher == launcher_name:
+                    if hasattr(self, 'launcher_status'):
+                        self.launcher_status.setText(f"Using: {launcher}")
+                    return path
+        
+        # Default to Fishstrap if no valid paths found
+        if hasattr(self, 'launcher_status'):
+            self.launcher_status.setText("No logs found")
+        
+        return log_paths["Fishstrap"]
 
     def get_latest_log_file(self):
         try:
@@ -664,7 +781,6 @@ class FishstrapWatcherApp(QMainWindow):
             return False 
 
     def monitor_log(self):
-
         if self.monitor_thread:
             self.monitor_thread.webhook_signal.emit(
                 "▶️ RiftScope Started",
@@ -677,6 +793,17 @@ class FishstrapWatcherApp(QMainWindow):
         self.last_timestamp = None 
         self.processed_lines.clear() 
 
+        # Identify which launcher we're using
+        log_dir = self.get_log_dir()
+        launcher_used = "Unknown"
+        for name in ["Fishstrap", "Bloxstrap", "Roblox"]:
+            if name.lower() in log_dir.lower():
+                launcher_used = name
+                break
+        
+        if self.monitor_thread:
+            self.monitor_thread.update_status_signal.emit(f"Monitoring using {launcher_used} logs at {log_dir}")
+
         if self.lock_log_file:
             locked_log = self.get_latest_log_file()
             if locked_log:
@@ -686,7 +813,6 @@ class FishstrapWatcherApp(QMainWindow):
             else:
                 if self.monitor_thread:
                     self.monitor_thread.update_status_signal.emit("No log file found to lock onto. Waiting...")
-
                 return 
 
         while self.running: 
@@ -740,6 +866,18 @@ class FishstrapWatcherApp(QMainWindow):
                                 f"A royal chest has been found in the chat!", 
                                 self.royal_image_url,
                                 0x9b59b6,
+                                ping_id if ping_id else None
+                            )
+
+                    elif "Bring us your gum, Earthlings!" in line:
+                        if self.monitor_thread:
+                            self.monitor_thread.update_status_signal.emit("🫧 Gum Rift detected!")
+                            ping_id = self.ping_id_entry.text().strip()
+                            self.monitor_thread.webhook_signal.emit(
+                                "🫧 GUM RIFT DETECTED! 🫧",
+                                f"A gum rift has been found in the chat!", 
+                                None,
+                                0xFF69B4,
                                 ping_id if ping_id else None
                             )
 
@@ -1044,6 +1182,6 @@ echo Exiting updater script...
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    main_window = FishstrapWatcherApp()
+    main_window = RiftScopeApp()
     main_window.show()
     sys.exit(app.exec()) 
