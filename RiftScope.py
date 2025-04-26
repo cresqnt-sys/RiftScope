@@ -112,7 +112,7 @@ class CalibrationOverlay(QWidget):
 
     def mousePressEvent(self, event):
 
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton: 
             self.point_selected.emit(event.pos())
             self.close() 
 
@@ -122,7 +122,7 @@ class CalibrationOverlay(QWidget):
             self.close()
 
 class RiftScopeApp(QMainWindow):
-    APP_VERSION = "1.2.0-Stable"
+    APP_VERSION = "1.2.1-Stable"
     REPO_URL = "cresqnt-sys/RiftScope"
     EVENT_COOLDOWN_SECONDS = 10 
 
@@ -170,6 +170,7 @@ class RiftScopeApp(QMainWindow):
         self.last_gum_rift_time = 0
         self.last_aura_egg_time = 0
         self.last_hatch_ping_time = 0 
+        self.last_silly_egg_time = 0 
 
         self.royal_image_url = "https://ps99.biggamesapi.io/image/76803303814891"
         self.aura_image_url = "https://ps99.biggamesapi.io/image/95563056090518"
@@ -465,7 +466,15 @@ class RiftScopeApp(QMainWindow):
         self.aura_egg_ping_display.setTextFormat(Qt.TextFormat.RichText)
         pings_grid_layout.addWidget(self.aura_egg_ping_display, 2, 1, 1, 2) 
 
-        pings_grid_layout.setColumnStretch(1, 1) 
+        self.silly_egg_ping_label = QLabel("Silly Egg Ping:")
+        self.silly_egg_ping_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        pings_grid_layout.addWidget(self.silly_egg_ping_label, 3, 0)
+
+        self.silly_egg_ping_display = QLabel("<code>@everyone</code> (Cannot be changed)")
+        self.silly_egg_ping_display.setTextFormat(Qt.TextFormat.RichText)
+        pings_grid_layout.addWidget(self.silly_egg_ping_display, 3, 1, 1, 2)
+
+        pings_grid_layout.setColumnStretch(1, 1)
 
         pings_layout.addLayout(pings_grid_layout) 
         pings_layout.addStretch()
@@ -533,7 +542,7 @@ class RiftScopeApp(QMainWindow):
             self.hatch_detection_enabled_checkbox.setChecked(True) 
         hatch_layout.addWidget(self.hatch_detection_enabled_checkbox)
 
-        self.hatch_username_label = QLabel("Username (for Secret Ping):") 
+        self.hatch_username_label = QLabel("Roblox Username (for Secret Ping):") 
         hatch_layout.addWidget(self.hatch_username_label)
         self.hatch_username_entry = QLineEdit()
         self.hatch_username_entry.setPlaceholderText("Enter the username for hatching")
@@ -1266,10 +1275,23 @@ class RiftScopeApp(QMainWindow):
                                 "🌟 AURA EGG DETECTED! 🌟",
                                 f"An aura egg has been found in the chat!",
                                 self.aura_image_url,
-                                0x3498db,
+                                0x3498db, 
                                 "@everyone" 
                             )
                         self.last_aura_egg_time = current_time 
+
+                    elif "we're so silly and fun" in line: 
+
+                        if self.monitor_thread:
+                            self.monitor_thread.update_status_signal.emit("😂 Silly Egg detected!")
+                            self.monitor_thread.webhook_signal.emit(
+                                "😂 SILLY EGG DETECTED! 😂",
+                                f"A Silly Egg has been found in the chat!",
+                                None, 
+                                0xf1c40f, 
+                                "@everyone" 
+                            )
+                        self.last_silly_egg_time = current_time 
 
                     elif self.hatch_detection_enabled_checkbox.isChecked() and "just hatched a" in line:
                         print(f"[DEBUG] Found 'just hatched a' in line: {line.strip()}") 
@@ -1302,48 +1324,57 @@ class RiftScopeApp(QMainWindow):
 
                             is_secret = base_pet_name in self.SECRET_PETS
                             is_legendary = base_pet_name in self.LEGENDARY_PETS
-                            print(f"[DEBUG] Is Base Secret: {is_secret}, Is Base Legendary: {is_legendary}") 
+                            print(f"[DEBUG] Is Base Secret: {is_secret}, Is Base Legendary: {is_legendary}")
 
                             if is_secret or is_legendary:
-                                print(f"[DEBUG] Base Pet ('{base_pet_name}') is Secret or Legendary.") 
+                                print(f"[DEBUG] Base Pet ('{base_pet_name}') is Secret or Legendary.")
 
-                                cooldown_check = current_time - self.last_hatch_ping_time
-                                print(f"[DEBUG] Time since last hatch: {cooldown_check:.2f}s (Cooldown: {self.EVENT_COOLDOWN_SECONDS}s)") 
-                                if cooldown_check > self.EVENT_COOLDOWN_SECONDS:
-                                    print("[DEBUG] Cooldown passed.") 
-                                    if self.monitor_thread:
-                                        print("[DEBUG] Monitor thread exists. Sending status/webhook.") 
-                                        pet_type = "Secret" if is_secret else "Legendary"
+                                target_username = self.hatch_username_entry.text().strip()
+                                if target_username and hatched_username.lower() == target_username.lower():
+                                    print(f"[DEBUG] Username '{hatched_username}' matches target '{target_username}'. Proceeding...")
 
-                                        self.monitor_thread.update_status_signal.emit(f"🎉 {pet_type} Pet Hatched by {hatched_username}: {pet_name} ({rarity})") 
+                                    cooldown_check = current_time - self.last_hatch_ping_time
+                                    print(f"[DEBUG] Time since last hatch: {cooldown_check:.2f}s (Cooldown: {self.EVENT_COOLDOWN_SECONDS}s)")
+                                    if cooldown_check > self.EVENT_COOLDOWN_SECONDS:
+                                        print("[DEBUG] Cooldown passed.")
+                                        if self.monitor_thread:
+                                            print("[DEBUG] Monitor thread exists. Sending status/webhook.")
+                                            pet_type = "Secret" if is_secret else "Legendary"
 
-                                        ping_content = None
-                                        target_username = self.hatch_username_entry.text().strip()
-                                        ping_user_id = self.hatch_userid_entry.text().strip()
+                                            self.monitor_thread.update_status_signal.emit(f"🎉 {pet_type} Pet Hatched by {hatched_username}: {pet_name} ({rarity})")
 
-                                        if is_secret and self.hatch_secret_ping_checkbox.isChecked() and ping_user_id and target_username and hatched_username.lower() == target_username.lower():
-                                            ping_content = f"<@{ping_user_id}>"
+                                            ping_content = None
 
-                                        try:
-                                            embed_color = int(pet_color_hex.lstrip('#'), 16)
-                                        except ValueError:
-                                            embed_color = 0x7289DA 
+                                            ping_user_id = self.hatch_userid_entry.text().strip()
 
-                                        self.monitor_thread.webhook_signal.emit(
-                                            f"🎉 {pet_type.upper()} PET HATCHED! 🎉",
-                                            f"**User:** {hatched_username}\n"
-                                            f"**Pet:** {pet_name}\n"
-                                            f"**Rarity:** {rarity}",
-                                            None, 
-                                            embed_color,
-                                            ping_content 
-                                        )
-                                    self.last_hatch_ping_time = current_time 
-                                else: 
-                                    if self.monitor_thread:
-                                        pet_type = "Secret" if is_secret else "Legendary"
+                                            if is_secret and self.hatch_secret_ping_checkbox.isChecked() and ping_user_id:
+                                                ping_content = f"<@{ping_user_id}>"
 
-                                        self.monitor_thread.update_status_signal.emit(f"{pet_type} hatch detected for {hatched_username} (Cooldown). Skipping ping.")
+                                            try:
+                                                embed_color = int(pet_color_hex.lstrip('#'), 16)
+                                            except ValueError:
+                                                embed_color = 0x7289DA
+
+                                            self.monitor_thread.webhook_signal.emit(
+                                                f"🎉 {pet_type.upper()} PET HATCHED! 🎉",
+                                                f"**User:** {hatched_username}\n"
+                                                f"**Pet:** {pet_name}\n"
+                                                f"**Rarity:** {rarity}",
+                                                None,
+                                                embed_color,
+                                                ping_content
+                                            )
+
+                                        self.last_hatch_ping_time = current_time
+                                    else:
+
+                                        if self.monitor_thread:
+                                            pet_type = "Secret" if is_secret else "Legendary"
+
+                                            self.monitor_thread.update_status_signal.emit(f"{pet_type} hatch detected for {hatched_username} (Cooldown). Skipping ping.")
+
+                                else:
+                                     print(f"[DEBUG] Username '{hatched_username}' does not match target '{target_username}' or target is empty. Skipping notification.")
 
                 if new_line_found:
                     self.last_line_time = time.time() 
@@ -1396,7 +1427,7 @@ class RiftScopeApp(QMainWindow):
         self.stop_button.setEnabled(True)
         self.test_button.setEnabled(False) 
         self.lock_button.setEnabled(False) 
-        self.webhook_entry.setEnabled(False) 
+        self.webhook_entry.setEnabled(False)
         self.pslink_entry.setEnabled(False)
         self.royal_chest_ping_entry.setEnabled(False)
         self.royal_chest_ping_type_combo.setEnabled(False)
