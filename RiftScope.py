@@ -7,12 +7,23 @@ import psutil
 import sys  
 import subprocess
 import packaging.version
+import pynput 
+import pyautogui 
+from pynput import keyboard as pynput_keyboard 
+from pynput import mouse as pynput_mouse       
+try:
+    import autoit 
+    AUTOIT_AVAILABLE = True
+except ImportError:
+    AUTOIT_AVAILABLE = False
+    print("WARNING: pyautoit module not found or AutoIt installation missing. Teleport click will likely fail.")
+    print("Install AutoIt from https://www.autoitscript.com/site/autoit/downloads/ and run 'pip install pyautoit'")
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                            QFrame, QMessageBox, QStyleFactory, QTabWidget, 
-                           QTextEdit, QComboBox) 
-from PyQt6.QtGui import QPalette, QColor, QFont, QKeySequence, QShortcut, QIcon 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal 
+                           QTextEdit, QComboBox, QGridLayout, QCheckBox) 
+from PyQt6.QtGui import QPalette, QColor, QFont, QKeySequence, QShortcut, QIcon, QPainter, QPen, QBrush 
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint 
 from datetime import datetime
 
 dark_palette = QPalette()
@@ -77,11 +88,46 @@ class Worker(QThread):
         finally:
             self.finished_signal.emit()
 
+class CalibrationOverlay(QWidget):
+    point_selected = pyqtSignal(QPoint) 
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.SplashScreen)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowState(Qt.WindowState.WindowFullScreen)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+
+        painter.fillRect(self.rect(), QColor(40, 40, 40, 180))
+
+        painter.setPen(QColor(220, 220, 220))
+        font = QFont("Segoe UI", 16)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                         "Click on the exact location of the Teleport Button.\nPress ESC to cancel.")
+
+    def mousePressEvent(self, event):
+
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.point_selected.emit(event.pos())
+            self.close() 
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            print("Calibration cancelled by user.")
+            self.close()
+
 class RiftScopeApp(QMainWindow):
-    APP_VERSION = "1.0.1-Beta" 
+    APP_VERSION = "1.1.0-Beta" 
     REPO_URL = "cresqnt-sys/RiftScope"
 
     update_prompt_signal = pyqtSignal(str, str)
+
+    start_hotkey_signal = pyqtSignal()
+    stop_hotkey_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -107,6 +153,13 @@ class RiftScopeApp(QMainWindow):
         self.test_running = False
         self.test_worker = None 
 
+        self.collection_enabled = False
+        self.teleport_coords = None 
+        self.collection_worker = None
+        self.collection_running = False
+        self.calibration_overlay = None
+        self.calibrating = False
+
         self.royal_image_url = "https://ps99.biggamesapi.io/image/76803303814891"
         self.aura_image_url = "https://ps99.biggamesapi.io/image/95563056090518"
 
@@ -119,11 +172,9 @@ class RiftScopeApp(QMainWindow):
             config_dir = os.path.dirname(os.path.abspath(__file__)) 
             self.config_file = os.path.join(config_dir, "config.json")
 
-        # --- First Launch Check ---
         first_launch = not os.path.exists(self.config_file)
         if first_launch:
-            # Use a temporary QWidget parent if the main window isn't fully ready
-            # This might not be strictly necessary but is safer practice early in __init__
+
             temp_parent = QWidget() 
             QMessageBox.warning(
                 temp_parent, 
@@ -140,19 +191,22 @@ class RiftScopeApp(QMainWindow):
                 "You only need to do this once.",
                 QMessageBox.StandardButton.Ok
             )
-            temp_parent.deleteLater() # Clean up the temporary widget
-        # --- End First Launch Check ---
+            temp_parent.deleteLater() 
+
+        self.hotkey_listener = None 
 
         self.load_config()
         self.build_ui()
         self.apply_roblox_fastflags()
 
-        self.setup_keybinds()
+        self.start_hotkey_signal.connect(self.start_macro)
+        self.stop_hotkey_signal.connect(self.stop_macro)
+
+        listener_thread = threading.Thread(target=self._start_pynput_listener, daemon=True)
+        listener_thread.start()
 
         self.update_prompt_signal.connect(self.prompt_update)
-
         self.update_checker_worker = Worker(self.check_for_updates)
-
         self.update_checker_worker.start()
 
     def build_ui(self):
@@ -184,34 +238,33 @@ class RiftScopeApp(QMainWindow):
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(5)
 
-        # Add Roblox launcher selection
         self.launcher_label = QLabel("Roblox Launcher:")
         input_layout.addWidget(self.launcher_label)
-        
+
         launcher_frame = QFrame()
         launcher_layout = QHBoxLayout(launcher_frame)
         launcher_layout.setContentsMargins(0, 0, 0, 0)
         launcher_layout.setSpacing(5)
-        
+
         self.launcher_combo = QComboBox()
         self.launcher_combo.addItem("Auto (Detect)")
         self.launcher_combo.addItem("Fishstrap")
         self.launcher_combo.addItem("Bloxstrap")
         self.launcher_combo.addItem("Roblox")
-        
+
         if hasattr(self, 'launcher_choice'):
             index = self.launcher_combo.findText(self.launcher_choice)
             if index >= 0:
                 self.launcher_combo.setCurrentIndex(index)
             elif self.launcher_choice == "Auto":
                 self.launcher_combo.setCurrentIndex(0)
-        
+
         launcher_layout.addWidget(self.launcher_combo)
-        
+
         self.launcher_status = QLabel("")
         self.launcher_status.setStyleSheet("color: #43b581;")
         launcher_layout.addWidget(self.launcher_status)
-        
+
         input_layout.addWidget(launcher_frame)
 
         self.webhook_label = QLabel("Discord Webhook URL:")
@@ -229,14 +282,6 @@ class RiftScopeApp(QMainWindow):
         if hasattr(self, 'ps_link') and self.ps_link:
             self.pslink_entry.setText(self.ps_link)
         input_layout.addWidget(self.pslink_entry)
-
-        self.ping_id_label = QLabel("Discord Ping ID (User/Role - Optional):")
-        input_layout.addWidget(self.ping_id_label)
-        self.ping_id_entry = QLineEdit()
-        self.ping_id_entry.setPlaceholderText("Enter <@USER_ID> or <@&ROLE_ID>")
-        if hasattr(self, 'ping_id') and self.ping_id:
-            self.ping_id_entry.setText(self.ping_id)
-        input_layout.addWidget(self.ping_id_entry)
 
         scanner_layout.addWidget(input_frame)
 
@@ -286,6 +331,136 @@ class RiftScopeApp(QMainWindow):
 
         scanner_layout.addStretch() 
 
+        # --- Define Credits Tab Content --- 
+        # (Define it here, but add it to the widget later)
+        credits_tab_widget = QWidget()
+        credits_layout = QVBoxLayout(credits_tab_widget)
+        credits_layout.setContentsMargins(15, 20, 15, 15)
+        credits_layout.setSpacing(10)
+
+        credits_title_label = QLabel("Credits")
+        credits_title_font = QFont("Segoe UI", 12)
+        credits_title_font.setBold(True)
+        credits_title_label.setFont(credits_title_font)
+        credits_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        credits_layout.addWidget(credits_title_label)
+
+        cresqnt_label = QLabel("<b>cresqnt:</b> Macro Maintainer")
+        cresqnt_label.setTextFormat(Qt.TextFormat.RichText)
+        cresqnt_label.setWordWrap(True)
+        credits_layout.addWidget(cresqnt_label)
+
+        digital_label = QLabel("<b>Digital:</b> Creator of detection, pathing, and some of UI. ")
+        digital_label.setTextFormat(Qt.TextFormat.RichText) 
+        digital_label.setWordWrap(True)
+        credits_layout.addWidget(digital_label)
+
+        credits_layout.addStretch() 
+        # --- End Define Credits Tab Content ---
+
+        self.pings_tab = QWidget()
+        pings_layout = QVBoxLayout(self.pings_tab)
+        pings_layout.setContentsMargins(10, 10, 10, 10)
+        self.tab_widget.addTab(self.pings_tab, "Pings")
+
+        pings_title_label = QLabel("Pings")
+        pings_title_font = QFont("Segoe UI", 12)
+        pings_title_font.setBold(True)
+        pings_title_label.setFont(pings_title_font)
+        pings_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pings_layout.addWidget(pings_title_label)
+
+        pings_grid_layout = QGridLayout()
+        pings_grid_layout.setContentsMargins(10, 10, 10, 10) 
+        pings_grid_layout.setSpacing(10) 
+
+        self.royal_chest_ping_label = QLabel("Royal Chest Ping:")
+        self.royal_chest_ping_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        pings_grid_layout.addWidget(self.royal_chest_ping_label, 0, 0)
+
+        self.royal_chest_ping_entry = QLineEdit()
+        self.royal_chest_ping_entry.setPlaceholderText("Enter User/Role ID (Optional)")
+        if hasattr(self, 'royal_chest_ping_id') and self.royal_chest_ping_id:
+            self.royal_chest_ping_entry.setText(self.royal_chest_ping_id)
+        pings_grid_layout.addWidget(self.royal_chest_ping_entry, 0, 1)
+
+        self.royal_chest_ping_type_combo = QComboBox()
+        self.royal_chest_ping_type_combo.addItem("User")
+        self.royal_chest_ping_type_combo.addItem("Role")
+        self.royal_chest_ping_type_combo.setFixedWidth(60) 
+        if hasattr(self, 'royal_chest_ping_type'):
+            index = self.royal_chest_ping_type_combo.findText(self.royal_chest_ping_type)
+            if index >= 0:
+                self.royal_chest_ping_type_combo.setCurrentIndex(index)
+        pings_grid_layout.addWidget(self.royal_chest_ping_type_combo, 0, 2)
+
+        self.gum_rift_ping_label = QLabel("Gum Rift Ping:")
+        self.gum_rift_ping_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        pings_grid_layout.addWidget(self.gum_rift_ping_label, 1, 0)
+
+        self.gum_rift_ping_entry = QLineEdit()
+        self.gum_rift_ping_entry.setPlaceholderText("Enter User/Role ID (Optional)")
+        if hasattr(self, 'gum_rift_ping_id') and self.gum_rift_ping_id:
+            self.gum_rift_ping_entry.setText(self.gum_rift_ping_id)
+        pings_grid_layout.addWidget(self.gum_rift_ping_entry, 1, 1)
+
+        self.gum_rift_ping_type_combo = QComboBox()
+        self.gum_rift_ping_type_combo.addItem("User")
+        self.gum_rift_ping_type_combo.addItem("Role")
+        self.gum_rift_ping_type_combo.setFixedWidth(60) 
+        if hasattr(self, 'gum_rift_ping_type'):
+            index = self.gum_rift_ping_type_combo.findText(self.gum_rift_ping_type)
+            if index >= 0:
+                self.gum_rift_ping_type_combo.setCurrentIndex(index)
+        pings_grid_layout.addWidget(self.gum_rift_ping_type_combo, 1, 2)
+
+        self.aura_egg_ping_label = QLabel("Aura Egg Ping:")
+        self.aura_egg_ping_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        pings_grid_layout.addWidget(self.aura_egg_ping_label, 2, 0)
+
+        self.aura_egg_ping_display = QLabel("<code>@everyone</code> (Cannot be changed)")
+        self.aura_egg_ping_display.setTextFormat(Qt.TextFormat.RichText)
+        pings_grid_layout.addWidget(self.aura_egg_ping_display, 2, 1, 1, 2) 
+
+        pings_grid_layout.setColumnStretch(1, 1) 
+
+        pings_layout.addLayout(pings_grid_layout) 
+        pings_layout.addStretch()
+
+        self.collection_tab = QWidget()
+        collection_layout = QVBoxLayout(self.collection_tab)
+        collection_layout.setContentsMargins(15, 20, 15, 15)
+        collection_layout.setSpacing(10)
+        pings_tab_index = self.tab_widget.indexOf(self.pings_tab)
+        self.tab_widget.insertTab(pings_tab_index + 1, self.collection_tab, "Collection")
+
+        collection_title_label = QLabel("Collection Path")
+        collection_title_font = QFont("Segoe UI", 12)
+        collection_title_font.setBold(True)
+        collection_title_label.setFont(collection_title_font)
+        collection_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        collection_layout.addWidget(collection_title_label)
+
+        self.collection_enabled_checkbox = QCheckBox("Enable Collection Path")
+        self.collection_enabled_checkbox.setChecked(self.collection_enabled) 
+        collection_layout.addWidget(self.collection_enabled_checkbox)
+
+        self.calibrate_button = QPushButton() 
+        self._update_calibrate_button_text() 
+        self.calibrate_button.setStyleSheet(button_stylesheet.format(
+             bg_color="#43b581", fg_color="white", hover_bg_color="#3ca374", pressed_bg_color="#359066"
+        ))
+        self.calibrate_button.clicked.connect(self.start_calibration) 
+        collection_layout.addWidget(self.calibrate_button)
+
+        self.calibrate_coords_label = QLabel("")
+        self.calibrate_coords_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.calibrate_coords_label.setStyleSheet("font-size: 8pt; color: #aaa;")
+        collection_layout.addWidget(self.calibrate_coords_label)
+        self._update_calibrate_button_text() 
+
+        collection_layout.addStretch()
+
         self.logs_tab = QWidget()
         logs_layout = QVBoxLayout(self.logs_tab)
         logs_layout.setContentsMargins(10, 10, 10, 10)
@@ -298,37 +473,10 @@ class RiftScopeApp(QMainWindow):
              self.log_console.setFont(log_font)
         logs_layout.addWidget(self.log_console)
 
-        self.credits_tab = QWidget()
-        credits_layout = QVBoxLayout(self.credits_tab)
-        credits_layout.setContentsMargins(15, 20, 15, 15)
-        credits_layout.setSpacing(10)
+        # --- Add Credits Tab at the end ---
+        self.credits_tab = credits_tab_widget # Assign the previously defined widget
         self.tab_widget.addTab(self.credits_tab, "Credits")
-
-        credits_title_label = QLabel("Credits")
-        credits_title_font = QFont("Segoe UI", 12)
-        credits_title_font.setBold(True)
-        credits_title_label.setFont(credits_title_font)
-        credits_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        credits_layout.addWidget(credits_title_label)
-
-        cresqnt_label = QLabel("<b>cresqnt:</b> Macro maintainer")
-        cresqnt_label.setTextFormat(Qt.TextFormat.RichText)
-        cresqnt_label.setWordWrap(True)
-        credits_layout.addWidget(cresqnt_label)
-
-        digital_label = QLabel("<b>Digital:</b> Original macro creator")
-        digital_label.setTextFormat(Qt.TextFormat.RichText) 
-        digital_label.setWordWrap(True)
-        credits_layout.addWidget(digital_label)
-
-        credits_layout.addStretch() 
-
-    def setup_keybinds(self):
-        start_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F1), self)
-        stop_shortcut = QShortcut(QKeySequence(Qt.Key.Key_F2), self)
-
-        start_shortcut.activated.connect(self.start_macro)
-        stop_shortcut.activated.connect(self.stop_macro)
+        # --- End Add Credits Tab ---
 
     def run_test_scan(self):
         if self.test_running:
@@ -458,7 +606,6 @@ class RiftScopeApp(QMainWindow):
             self.update_status("Error: LOCALAPPDATA environment variable not found.")
             return
 
-        # Define paths for different Roblox launchers
         launcher_paths = [
             ('Roblox', os.path.join(local_app_data, 'Roblox', 'Versions')),
             ('Bloxstrap', os.path.join(local_app_data, 'Bloxstrap', 'Roblox', 'Versions')),
@@ -480,21 +627,20 @@ class RiftScopeApp(QMainWindow):
                         exe_path = os.path.join(potential_path, 'RobloxPlayerBeta.exe')
                         if os.path.isfile(exe_path):
                             roblox_folders.append(potential_path)
-                
+
                 if not roblox_folders:
                     self.update_status(f"Info: No RobloxPlayerBeta.exe found in {launcher_name} versions folder.")
                     continue
-                
-                # Apply to all found Roblox installations for this launcher
+
                 for folder in roblox_folders:
                     client_settings_path = os.path.join(folder, 'ClientSettings')
                     json_file_path = os.path.join(client_settings_path, 'ClientAppSettings.json')
-                    
+
                     fastflags_config = {
                         "FStringDebugLuaLogLevel": "trace",
                         "FStringDebugLuaLogPattern": "ExpChat/mountClientApp"
                     }
-                    
+
                     try:
                         os.makedirs(client_settings_path, exist_ok=True)
                         with open(json_file_path, 'w') as f:
@@ -503,11 +649,11 @@ class RiftScopeApp(QMainWindow):
                         self.update_status(f"Applied FastFlags to {launcher_name} at: {json_file_path}")
                     except Exception as e:
                         self.update_status(f"Error applying FastFlags to {launcher_name}: {e}")
-                
+
             except OSError as e:
                 self.update_status(f"Error accessing {launcher_name} versions directory: {e}")
                 continue
-        
+
         if installed_count > 0:
             self.update_status(f"Successfully applied FastFlags to {installed_count} Roblox installation(s)")
         else:
@@ -520,26 +666,67 @@ class RiftScopeApp(QMainWindow):
                     config = json.load(f)
                     self.webhook_url = config.get('webhook_url', '')
                     self.ps_link = config.get('ps_link', '')
-                    self.ping_id = config.get('ping_id', '')
+                    self.royal_chest_ping_id = config.get('royal_chest_ping_id', '')
+                    self.royal_chest_ping_type = config.get('royal_chest_ping_type', 'User')
+                    self.gum_rift_ping_id = config.get('gum_rift_ping_id', '')
+                    self.gum_rift_ping_type = config.get('gum_rift_ping_type', 'User')
                     self.launcher_choice = config.get('launcher_choice', 'Auto')
+
+                    self.collection_enabled = config.get('collection_enabled', False)
+                    loaded_coords = config.get('teleport_coords', None)
+
+                    if isinstance(loaded_coords, (list, tuple)):
+                        if len(loaded_coords) == 2:
+                            self.teleport_coords = tuple(loaded_coords) 
+                        elif len(loaded_coords) == 4:
+
+                            self.teleport_coords = tuple(loaded_coords[:2])
+                            print("Note: Old calibration format detected, using only x, y.")
+                        else:
+                             self.teleport_coords = None 
+                    else:
+                        self.teleport_coords = None
 
                     if hasattr(self, 'webhook_entry'):
                          self.webhook_entry.setText(self.webhook_url)
                     if hasattr(self, 'pslink_entry'):
                          self.pslink_entry.setText(self.ps_link)
-                    if hasattr(self, 'ping_id_entry'):
-                         self.ping_id_entry.setText(self.ping_id)
+                    if hasattr(self, 'royal_chest_ping_entry'):
+                         self.royal_chest_ping_entry.setText(self.royal_chest_ping_id)
+                    if hasattr(self, 'royal_chest_ping_type_combo'):
+                         index = self.royal_chest_ping_type_combo.findText(self.royal_chest_ping_type)
+                         if index >= 0:
+                             self.royal_chest_ping_type_combo.setCurrentIndex(index)
+                    if hasattr(self, 'gum_rift_ping_entry'):
+                         self.gum_rift_ping_entry.setText(self.gum_rift_ping_id)
+                    if hasattr(self, 'gum_rift_ping_type_combo'):
+                         index = self.gum_rift_ping_type_combo.findText(self.gum_rift_ping_type)
+                         if index >= 0:
+                             self.gum_rift_ping_type_combo.setCurrentIndex(index)
             else:
                 self.webhook_url = ''
                 self.ps_link = ''
-                self.ping_id = ''
+                self.royal_chest_ping_id = ''
+                self.royal_chest_ping_type = 'User'
+                self.gum_rift_ping_id = ''
+                self.gum_rift_ping_type = 'User'
                 self.launcher_choice = 'Auto'
+
+                self.collection_enabled = False
+                self.teleport_coords = None
+
         except Exception as e:
             print(f"Error loading config: {e}")
             self.webhook_url = ''
             self.ps_link = ''
-            self.ping_id = ''
+            self.royal_chest_ping_id = ''
+            self.royal_chest_ping_type = 'User'
+            self.gum_rift_ping_id = ''
+            self.gum_rift_ping_type = 'User'
             self.launcher_choice = 'Auto'
+
+            self.collection_enabled = False
+            self.teleport_coords = None
 
     def save_config(self):
         try:
@@ -549,8 +736,15 @@ class RiftScopeApp(QMainWindow):
             config = {
                 'webhook_url': self.webhook_entry.text().strip(),
                 'ps_link': self.pslink_entry.text().strip() ,
-                'ping_id': self.ping_id_entry.text().strip(),
-                'launcher_choice': self.launcher_combo.currentText()
+                'royal_chest_ping_id': self.royal_chest_ping_entry.text().strip(),
+                'royal_chest_ping_type': self.royal_chest_ping_type_combo.currentText(),
+                'gum_rift_ping_id': self.gum_rift_ping_entry.text().strip(),
+                'gum_rift_ping_type': self.gum_rift_ping_type_combo.currentText(),
+                'launcher_choice': self.launcher_combo.currentText(),
+
+                'collection_enabled': self.collection_enabled_checkbox.isChecked() if hasattr(self, 'collection_enabled_checkbox') else self.collection_enabled,
+                'teleport_coords': self.teleport_coords 
+
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=4)
@@ -558,45 +752,58 @@ class RiftScopeApp(QMainWindow):
             print(f"Error saving config: {e}")
             self.update_status(f"Error saving config: {e}")
 
+    def _update_calibrate_button_text(self):
+        if hasattr(self, 'calibrate_button'):
+            if self.teleport_coords and len(self.teleport_coords) == 2:
+                x, y = self.teleport_coords
+
+                self.calibrate_button.setText(f"Recalibrate Teleport ({x}, {y})")
+
+                if hasattr(self, 'calibrate_coords_label'):
+                     self.calibrate_coords_label.setText(f"Calibrated at: ({x}, {y})")
+                     self.calibrate_coords_label.setVisible(True)
+            else:
+                self.calibrate_button.setText("Calibrate Teleport Button")
+
+                if hasattr(self, 'calibrate_coords_label'):
+                    self.calibrate_coords_label.setText("")
+                    self.calibrate_coords_label.setVisible(False)
+
     def get_log_dir(self):
         """Returns the appropriate log directory based on available Roblox launchers."""
         home = os.path.expanduser("~")
-        
-        # Define potential log paths for different launchers
+
         log_paths = {
             "Fishstrap": os.path.join(home, "AppData", "Local", "Fishstrap", "Logs"),
-            "Bloxstrap": os.path.join(home, "AppData", "Local", "Roblox", "Logs"),  # Bloxstrap uses standard Roblox logs
+            "Bloxstrap": os.path.join(home, "AppData", "Local", "Roblox", "Logs"),  
             "Roblox": os.path.join(home, "AppData", "Local", "Roblox", "Logs")
         }
-        
-        # Check for user-selected launcher choice
+
         if hasattr(self, 'launcher_combo'):
             choice = self.launcher_combo.currentText()
             if choice in log_paths:
                 return log_paths[choice]
             elif choice == "Auto (Detect)":
-                # Will proceed with auto-detection
+
                 pass
-        
-        # Auto-detection logic - check multiple paths
+
         valid_paths = []
         for launcher, path in log_paths.items():
             if os.path.isdir(path):
                 try:
                     if any(os.path.isfile(os.path.join(path, f)) for f in os.listdir(path)):
                         valid_paths.append((launcher, path))
-                        # Update status label if we have the UI
+
                         if hasattr(self, 'launcher_status'):
                             self.launcher_status.setText(f"Found {launcher} logs")
                 except Exception:
                     continue
-        
-        # If Roblox is running, prioritize the launcher with the most recent log file
+
         if self.is_roblox_running() and valid_paths:
             most_recent = None
             most_recent_time = 0
             most_recent_launcher = None
-            
+
             for launcher, path in valid_paths:
                 try:
                     files = [os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
@@ -609,25 +816,23 @@ class RiftScopeApp(QMainWindow):
                             most_recent_launcher = launcher
                 except Exception:
                     continue
-            
+
             if most_recent:
-                # Update status label if we have the UI
+
                 if hasattr(self, 'launcher_status'):
                     self.launcher_status.setText(f"Active: {most_recent_launcher}")
                 return most_recent
-        
-        # Use any valid path, prioritize in order: Fishstrap, Bloxstrap, Roblox
+
         for launcher_name in ["Fishstrap", "Bloxstrap", "Roblox"]:
             for launcher, path in valid_paths:
                 if launcher == launcher_name:
                     if hasattr(self, 'launcher_status'):
                         self.launcher_status.setText(f"Using: {launcher}")
                     return path
-        
-        # Default to Fishstrap if no valid paths found
+
         if hasattr(self, 'launcher_status'):
             self.launcher_status.setText("No logs found")
-        
+
         return log_paths["Fishstrap"]
 
     def get_latest_log_file(self):
@@ -730,12 +935,12 @@ class RiftScopeApp(QMainWindow):
         if image_url:
             embed["thumbnail"] = {"url": image_url}
 
-        ps_link = self.pslink_entry.text().strip() 
+        ps_link = self.pslink_entry.text().strip()
         if ps_link:
 
              embed["fields"].append({
                  "name": "Server Link",
-                 "value": f"[Click Here]({ps_link})", 
+                 "value": f"[Click Here]({ps_link})",
                  "inline": False
              })
 
@@ -793,14 +998,13 @@ class RiftScopeApp(QMainWindow):
         self.last_timestamp = None 
         self.processed_lines.clear() 
 
-        # Identify which launcher we're using
         log_dir = self.get_log_dir()
         launcher_used = "Unknown"
         for name in ["Fishstrap", "Bloxstrap", "Roblox"]:
             if name.lower() in log_dir.lower():
                 launcher_used = name
                 break
-        
+
         if self.monitor_thread:
             self.monitor_thread.update_status_signal.emit(f"Monitoring using {launcher_used} logs at {log_dir}")
 
@@ -860,25 +1064,29 @@ class RiftScopeApp(QMainWindow):
                     if "🔮" in line: 
                         if self.monitor_thread:
                             self.monitor_thread.update_status_signal.emit("✨ Royal chest detected!")
-                            ping_id = self.ping_id_entry.text().strip()
+                            ping_id = self.royal_chest_ping_entry.text().strip()
+                            ping_type = self.royal_chest_ping_type_combo.currentText()
+                            ping_mention = f"<@{ping_id}>" if ping_type == "User" else f"<@&{ping_id}>"
                             self.monitor_thread.webhook_signal.emit(
                                 "✨ ROYAL CHEST DETECTED! ✨",
                                 f"A royal chest has been found in the chat!", 
                                 self.royal_image_url,
                                 0x9b59b6,
-                                ping_id if ping_id else None
+                                ping_mention if ping_id else None
                             )
 
                     elif "Bring us your gum, Earthlings!" in line:
                         if self.monitor_thread:
                             self.monitor_thread.update_status_signal.emit("🫧 Gum Rift detected!")
-                            ping_id = self.ping_id_entry.text().strip()
+                            ping_id = self.gum_rift_ping_entry.text().strip()
+                            ping_type = self.gum_rift_ping_type_combo.currentText()
+                            ping_mention = f"<@{ping_id}>" if ping_type == "User" else f"<@&{ping_id}>"
                             self.monitor_thread.webhook_signal.emit(
                                 "🫧 GUM RIFT DETECTED! 🫧",
-                                f"A gum rift has been found in the chat!", 
+                                f"A gum rift has been found in the chat!",
                                 None,
                                 0xFF69B4,
-                                ping_id if ping_id else None
+                                ping_mention if ping_id else None
                             )
 
                     elif "aura" in line.lower(): 
@@ -922,6 +1130,7 @@ class RiftScopeApp(QMainWindow):
             time.sleep(0.75) 
 
     def start_macro(self):
+        print("--- F1 Shortcut/Start Button Activated ---") 
         self.save_config() 
 
         webhook_url = self.webhook_entry.text().strip()
@@ -947,50 +1156,127 @@ class RiftScopeApp(QMainWindow):
         self.lock_button.setEnabled(False) 
         self.webhook_entry.setEnabled(False) 
         self.pslink_entry.setEnabled(False)
-        self.ping_id_entry.setEnabled(False)
+        self.royal_chest_ping_entry.setEnabled(False)
+        self.royal_chest_ping_type_combo.setEnabled(False)
+        self.gum_rift_ping_entry.setEnabled(False)
+        self.gum_rift_ping_type_combo.setEnabled(False)
+
+        self.collection_enabled_checkbox.setEnabled(False)
+        self.calibrate_button.setEnabled(False)
+
         self.update_status("🔍 Scanning started...")
 
-    def stop_macro(self):
-        if not self.running:
-            return
+        if self.collection_enabled_checkbox.isChecked():
+            self.collection_enabled = True 
+            if self.teleport_coords:
+                self.update_status("🏁 Collection path enabled. Starting worker...")
+                self.collection_running = True
+                self.collection_worker = Worker(self.run_collection_loop)
 
+                self.collection_worker.update_status_signal.connect(self.update_status)
+
+                self.collection_worker.start()
+            else:
+                self.update_status("⚠️ Collection path enabled, but teleport button not calibrated. Skipping collection.")
+                QMessageBox.warning(self, "Collection Warning",
+                                    "Collection path is enabled, but the teleport button position hasn't been calibrated.\n"
+                                    "Please calibrate before starting if you want collection active.")
+
+        else:
+            self.collection_enabled = False
+
+    def stop_macro(self):
+        print("--- F2 Shortcut/Stop Button Activated ---") 
+
+        if not self.running and not self.collection_running: 
+            print("Stop ignored: Neither scanner nor collection is running.") 
+            return
+        was_running = self.running
         self.running = False 
+        self.collection_running = False 
 
         if self.monitor_thread and self.monitor_thread.isRunning():
 
-             self.monitor_thread.wait(1000) 
+             pass 
 
-        self.send_webhook(
-            "⏹️ RiftScope Stopped",
-            "RiftScope has been stopped manually.",
-            None,
-            0x95a5a6,
-            None
-        )
+        if self.collection_worker and self.collection_worker.isRunning():
+            self.update_status("Stopping collection worker...")
+            self.collection_worker.wait(2000) 
+            if self.collection_worker.isRunning(): 
+                 print("Collection worker did not stop gracefully, terminating.")
+                 self.collection_worker.terminate() 
+            self.collection_worker = None 
+
+        if was_running:
+            self.send_webhook(
+                "⏹️ RiftScope Stopped",
+                "RiftScope has been stopped manually.",
+                None,
+                0x95a5a6,
+                None
+            )
+
+        if not was_running:
+
+            self.start_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+            self.test_button.setEnabled(True)
+            self.lock_button.setEnabled(True)
+            self.webhook_entry.setEnabled(True)
+            self.pslink_entry.setEnabled(True)
+            self.royal_chest_ping_entry.setEnabled(True)
+            self.royal_chest_ping_type_combo.setEnabled(True)
+            self.gum_rift_ping_entry.setEnabled(True)
+            self.gum_rift_ping_type_combo.setEnabled(True)
+
+            self.collection_enabled_checkbox.setEnabled(True)
+            self.calibrate_button.setEnabled(True)
+
+            self.update_status("Scanner/Collection stopped. Ready again.")
 
     def on_monitor_finished(self):
-        self.running = False 
-        self.monitor_thread = None 
 
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.test_button.setEnabled(True)
-        self.lock_button.setEnabled(True)
-        self.webhook_entry.setEnabled(True)
-        self.pslink_entry.setEnabled(True)
-        self.ping_id_entry.setEnabled(True)
-        self.update_status("Scanner stopped. Ready to scan again.")
+        self.monitor_thread = None
+        self.update_status("Log monitoring worker finished.")
+
+        if not self.running and not self.collection_running:
+            self.start_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+            self.test_button.setEnabled(True)
+            self.lock_button.setEnabled(True)
+            self.webhook_entry.setEnabled(True)
+            self.pslink_entry.setEnabled(True)
+            self.royal_chest_ping_entry.setEnabled(True)
+            self.royal_chest_ping_type_combo.setEnabled(True)
+            self.gum_rift_ping_entry.setEnabled(True)
+            self.gum_rift_ping_type_combo.setEnabled(True)
+
+            self.collection_enabled_checkbox.setEnabled(True)
+            self.calibrate_button.setEnabled(True)
+
+            self.update_status("Scanner stopped. Ready to scan again.")
 
     def closeEvent(self, event):
-        if self.running:
+        if self.calibrating and self.calibration_overlay:
+             self.calibration_overlay.close() 
+
+        if self.hotkey_listener:
+            print("Stopping global hotkey listener...")
+            self.hotkey_listener.stop()
+
+        if self.running or self.collection_running:
+            self.update_status("Close requested. Stopping processes...")
             self.stop_macro() 
 
+            time.sleep(0.1)
+
             if self.monitor_thread and self.monitor_thread.isRunning():
-                self.monitor_thread.wait(500)
+                 self.monitor_thread.wait(500)
+            if self.collection_worker and self.collection_worker.isRunning():
+                 self.collection_worker.wait(500)
 
         if self.test_running and self.test_worker and self.test_worker.isRunning():
-             self.test_running = False 
-             self.test_worker.wait(500)
+             self.test_running = False
 
         event.accept() 
 
@@ -1180,8 +1466,204 @@ echo Exiting updater script...
                 try: os.remove(updater_bat_path) 
                 except OSError: pass
 
+    def start_calibration(self):
+        if self.calibrating:
+             print("Calibration already in progress.")
+             return
+        if self.running:
+             QMessageBox.warning(self, "Calibration Error", "Please stop the scanner before calibrating.")
+             return
+
+        if self.calibration_overlay is not None:
+             print("Warning: Previous calibration overlay object detected unexpectedly.")
+
+             try:
+                 self.calibration_overlay.destroyed.disconnect(self.on_calibration_closed)
+                 self.calibration_overlay.point_selected.disconnect(self.finish_calibration)
+             except (TypeError, RuntimeError): pass
+             self.calibration_overlay = None
+
+        self.calibrating = True
+        self.update_status("Starting teleport button calibration...")
+
+        new_overlay = CalibrationOverlay()
+
+        try:
+            new_overlay.point_selected.connect(self.finish_calibration)
+            new_overlay.destroyed.connect(self.on_calibration_closed)
+        except Exception as e:
+            print(f"Error connecting signals for new overlay: {e}")
+            self.calibrating = False 
+            return
+
+        self.calibration_overlay = new_overlay
+        self.calibration_overlay.show()
+
+    def finish_calibration(self, point):
+        if self.calibration_overlay:
+            self.teleport_coords = (point.x(), point.y()) 
+            self.update_status(f"Teleport point calibrated: ({point.x()},{point.y()})")
+            self._update_calibrate_button_text()
+            self.save_config() 
+
+            self.calibrating = False
+            self.calibration_overlay.close() 
+        else:
+             self.update_status("Calibration finished unexpectedly.")
+             self.calibrating = False 
+
+    def on_calibration_closed(self):
+        self.update_status("Calibration window closed.")
+        self.calibrating = False
+        self.calibration_overlay = None 
+
+    def _execute_collection_path(self):
+        """Simulates the sequence of key presses for collection."""
+        controller = pynput.keyboard.Controller()
+
+        def press_release(key_char, press_time_ms, sleep_after_ms):
+            if not self.collection_running: return False 
+            try:
+
+                 key = pynput.keyboard.KeyCode.from_char(key_char)
+                 controller.press(key)
+                 time.sleep(press_time_ms / 1000.0)
+                 controller.release(key)
+                 time.sleep(sleep_after_ms / 1000.0)
+            except Exception as e:
+                 print(f"Error pressing key '{key_char}': {e}")
+
+            return True
+
+        actions = [
+            ('a', 330, 10), ('s', 450, 10), ('d', 330, 10), ('w', 530, 10),
+            ('d', 440, 10), ('a', 200, 10), ('s', 500, 10), ('d', 500, 10),
+            ('s', 270, 10), ('a', 560, 10), ('s', 250, 10), ('d', 530, 10),
+            ('s', 500, 10), ('d', 200, 10), ('w', 620, 10), ('d', 200, 10),
+            ('s', 620, 10), ('d', 70, 10), ('s', 300, 10), ('d', 100, 10),
+            ('w', 1000, 10), ('d', 200, 10), ('s', 700, 10), ('a', 100, 10),
+            ('s', 300, 10), ('d', 330, 10), ('w', 300, 10), ('d', 300, 10),
+            ('w', 550, 10), ('a', 270, 10), ('s', 330, 10), ('a', 1000, 10),
+            ('w', 750, 10), ('a', 1000, 10), ('w', 2250, 10), ('w', 200, 10),
+            ('d', 350, 10), ('w', 570, 10), ('a', 500, 10), ('d', 1000, 10),
+            ('s', 150, 10), ('w', 500, 10), ('a', 600, 10), ('d', 600, 10),
+            ('w', 700, 10), ('d', 150, 10), ('s', 1000, 10), ('d', 300, 10),
+            ('w', 1000, 10), ('d', 300, 10), ('s', 840, 10), ('d', 300, 10),
+            ('w', 800, 10), ('s', 150, 10), ('d', 200, 10), ('s', 400, 10),
+            ('d', 250, 10), ('w', 500, 10), ('s', 200, 0) 
+        ]
+
+        if self.collection_worker: 
+            self.collection_worker.update_status_signal.emit("🚶 Starting collection path...")
+
+        for key, press_time, sleep_after in actions:
+            if not self.collection_running:
+                 if self.collection_worker:
+                    self.collection_worker.update_status_signal.emit("🚶 Collection path interrupted.")
+                 return False 
+            if not press_release(key, press_time, sleep_after):
+
+                 return False
+        if self.collection_worker:
+             self.collection_worker.update_status_signal.emit("🚶 Collection path finished.")
+        return True 
+
+    def run_collection_loop(self):
+        """The main loop for the collection worker thread."""
+        keyboard_controller = pynput_keyboard.Controller()
+
+        while self.collection_running:
+
+            path_completed = self._execute_collection_path()
+            if not path_completed or not self.collection_running:
+                break 
+
+            if self.collection_worker:
+                self.collection_worker.update_status_signal.emit("⏳ Waiting after path...")
+            time.sleep(2)
+            if not self.collection_running: break
+
+            try:
+                if self.collection_worker:
+                    self.collection_worker.update_status_signal.emit("⌨️ Pressing 'M'...")
+                keyboard_controller.press('m')
+                time.sleep(0.1) 
+                keyboard_controller.release('m')
+            except Exception as e:
+                if self.collection_worker:
+                     self.collection_worker.update_status_signal.emit(f"❌ Error pressing 'M': {e}")
+                time.sleep(1) 
+                continue 
+
+            time.sleep(2)
+            if not self.collection_running: break
+
+            if self.teleport_coords and len(self.teleport_coords) == 2: 
+                center_x, center_y = self.teleport_coords 
+                if AUTOIT_AVAILABLE:
+                    try:
+                        if self.collection_worker:
+                            self.collection_worker.update_status_signal.emit(f"🖱️ Clicking teleport at ({int(center_x)}, {int(center_y)}) via AutoIt...")
+
+                        autoit.mouse_click("left", int(center_x), int(center_y), 1, speed=5) 
+
+                        if self.collection_worker:
+                             self.collection_worker.update_status_signal.emit(f"⏳ Waiting 3 seconds after click...")
+                        time.sleep(3)
+
+                    except Exception as e:
+                         if self.collection_worker:
+                            self.collection_worker.update_status_signal.emit(f"❌ Error clicking teleport (AutoIt): {e}")
+                         time.sleep(1)
+                else:
+
+                     if self.collection_worker:
+                         self.collection_worker.update_status_signal.emit(f"⚠️ AutoIt not available. Cannot perform click.")
+                     time.sleep(1) 
+
+            else:
+                 if self.collection_worker:
+                    self.collection_worker.update_status_signal.emit("⚠️ Teleport coordinates not set or invalid, skipping click.")
+
+            time.sleep(1)
+
+        if self.collection_worker:
+            self.collection_worker.update_status_signal.emit("🚶 Collection loop stopped.")
+
+    def _on_hotkey_press(self, key):
+        """Callback function for pynput listener."""
+        try:
+
+            if key == pynput_keyboard.Key.f1:
+                print("--- F1 Detected (pynput) ---")
+                self.start_hotkey_signal.emit() 
+            elif key == pynput_keyboard.Key.f2:
+                print("--- F2 Detected (pynput) ---")
+                self.stop_hotkey_signal.emit() 
+        except AttributeError:
+
+            pass
+        except Exception as e:
+
+            print(f"Error in pynput listener callback: {e}")
+
+    def _start_pynput_listener(self):
+        """Runs in a separate thread to listen for global hotkeys."""
+        print("Starting global hotkey listener...")
+        try:
+
+            with pynput_keyboard.Listener(on_press=self._on_hotkey_press) as listener:
+                self.hotkey_listener = listener 
+                listener.join() 
+        except Exception as e:
+            print(f"Failed to start pynput listener: {e}")
+            self.update_status(f"Error: Failed to start global hotkey listener: {e}")
+        finally:
+            print("Global hotkey listener thread finished.")
+            self.hotkey_listener = None 
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     main_window = RiftScopeApp()
     main_window.show()
-    sys.exit(app.exec()) 
+    sys.exit(app.exec())

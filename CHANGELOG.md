@@ -4,7 +4,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (starting from 1.0.0-Alpha).
 
-## [1.0.1-Beta] - 2025-04-22
+## [1.1.0-Beta] - 2024-04-25 
+
+### Added
+- **Collection Path Feature**:
+    - Added a new "Collection" tab to the UI.
+    - Option to enable/disable the collection path macro.
+    - Calibration system (single click) to define the teleport button location.
+    - Coordinates displayed below the calibration button.
+    - Collection process runs concurrently with rift scanning.
+    - Uses `autoit.mouse_click` via `pyautoit` wrapper.
+    - 3-second delay added after teleport click.
+- Global hotkeys (F1 Start, F2 Stop) using `pynput` listener, replacing `QShortcut` to work when the window isn't focused.
+- Added Ping Selection
+
+### Changed
+- Updated application version constant to `1.1.0-Beta`.
+- Required dependencies now include `pynput`, `pyautogui`, and `pyautoit` (which itself requires AutoIt to be installed).
+- Moved "Credits" tab to be the last tab in the UI.
+- Updated text in the Credits tab.
+
+### Fixed
+- Fixed various bugs related to calibration state management (`AttributeError` and `NoneType` errors).
+- Fixed `UnboundLocalError` related to `launcher_frame` in `build_ui`.
+
+## [1.0.1-Beta] - 2025-04-23
 
 ### Added
 - Gum Rift detection for the message "Bring us your gum, Earthlings!" with pink notification color and bubble emoji (🫧).
