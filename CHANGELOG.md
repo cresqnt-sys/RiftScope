@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (starting from 1.0.0-Alpha).
 
+## [1.2.0-Stable] - 2025-04-26
+
+### Added
+- **Hatch Detection Features**:
+    - Added a new "Hatch" tab with settings for username, secret pet ping toggle, and user ID for pinging.
+    - Implemented detection logic for Secret and Legendary pets based on provided lists.
+    - Handles pet mutations (e.g., "Shiny", "Mythic") when checking against lists.
+    - Sends Discord webhook notifications for rare hatches, including embed color based on rarity.
+    - Option to ping a specific user ID when *their own* configured username hatches a Secret pet.
+    - Added a checkbox to enable/disable all hatch detection.
+    - Implemented a cooldown period (`last_hatch_ping_time`) for hatch notifications.
+    - Configuration saving/loading for all Hatch tab settings.
+- **Event Cooldown System**: Implemented a global cooldown (`EVENT_COOLDOWN_SECONDS`) to prevent duplicate webhook pings for Royal Chest and Gum Rift. (Aura Egg excluded from cooldown).
+- Automatic FFlags configuration, reducing reliance on external tools like Fishstrap.
+- Tutorial link for Collection
+
+### Changed
+- Updated application version to `1.2.0-Stable`.
+- **Autoupdater Process**: Modified the updater script (`_updater.bat`) generation to instruct the user to manually close the application before the update process replaces the executable.
+- Refined FastFlag application logic (`apply_roblox_fastflags`).
+- **First-Time Setup Notice**: 
+    - Now uses a `tutorial_shown` flag in `config.json` to determine if it should be displayed, instead of just checking for the config file's existence.
+    - The "OK" button is disabled for 10 seconds via a `QTimer`.
+    - The notice text informs the user about the 10-second delay.
+    - The `tutorial_shown` flag is only set to `True` (and saved) if the user explicitly clicks the "OK" button, not if the dialog is closed via the 'X' button.
+
+### Fixed
+- Re-added accidentally removed detection logic for Gum Rift and Aura Egg events.
+- Improved hatch detection regex to correctly identify pets with mutations (e.g., "Shiny Neon Elemental", "Mythic Seraphic Bunny").
+- Resolved an `AttributeError` crash that occurred when `save_config` was called during the first-time setup notice (before the main UI elements were created).
+
 ## [1.1.0-Beta] - 2024-04-25 
 
 ### Added
@@ -82,16 +113,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Migrated UI from previous implementation Tkinter to PyQt6.
-- Refactored background tasks into `Worker` QThread.
-- Updated application version to `1.0.0-Alpha`.
-- Updated webhook messages for start/stop events.
-- Reordered UI tabs (`Logs` tab placed before `Credits`).
-- Reordered labels in the Credits tab.
-- Improved log reading robustness (`read_last_n_lines`).
-- Updated `README.md` to correctly reference "Bubble Gum Simulator Infinity" and general Roblox logs, removing specific "Fishstrap" mentions.
-- Specified AGPL-3.0 license in `README.md`.
-- Made status updates display timestamps.
-
-### Fixed
-- Resolved errors related to incorrect signal emissions from worker threads.
-- Corrected configuration saving location to use `%APPDATA%`. 
+- Refactored background tasks into `

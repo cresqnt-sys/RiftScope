@@ -11,6 +11,7 @@ import pynput
 import pyautogui 
 from pynput import keyboard as pynput_keyboard 
 from pynput import mouse as pynput_mouse       
+import re 
 try:
     import autoit 
     AUTOIT_AVAILABLE = True
@@ -23,7 +24,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QFrame, QMessageBox, QStyleFactory, QTabWidget, 
                            QTextEdit, QComboBox, QGridLayout, QCheckBox) 
 from PyQt6.QtGui import QPalette, QColor, QFont, QKeySequence, QShortcut, QIcon, QPainter, QPen, QBrush 
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint 
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRect, QPoint, QTimer 
 from datetime import datetime
 
 dark_palette = QPalette()
@@ -121,8 +122,9 @@ class CalibrationOverlay(QWidget):
             self.close()
 
 class RiftScopeApp(QMainWindow):
-    APP_VERSION = "1.1.0-Beta" 
+    APP_VERSION = "1.2.0-Stable"
     REPO_URL = "cresqnt-sys/RiftScope"
+    EVENT_COOLDOWN_SECONDS = 10 
 
     update_prompt_signal = pyqtSignal(str, str)
 
@@ -160,6 +162,15 @@ class RiftScopeApp(QMainWindow):
         self.calibration_overlay = None
         self.calibrating = False
 
+        self.hatch_username = ""
+        self.hatch_secret_ping_enabled = False
+        self.hatch_secret_ping_user_id = ""
+
+        self.last_royal_chest_time = 0
+        self.last_gum_rift_time = 0
+        self.last_aura_egg_time = 0
+        self.last_hatch_ping_time = 0 
+
         self.royal_image_url = "https://ps99.biggamesapi.io/image/76803303814891"
         self.aura_image_url = "https://ps99.biggamesapi.io/image/95563056090518"
 
@@ -172,30 +183,47 @@ class RiftScopeApp(QMainWindow):
             config_dir = os.path.dirname(os.path.abspath(__file__)) 
             self.config_file = os.path.join(config_dir, "config.json")
 
-        first_launch = not os.path.exists(self.config_file)
-        if first_launch:
+        self.load_config() 
+        if not self.tutorial_shown:
 
-            temp_parent = QWidget() 
-            QMessageBox.warning(
-                temp_parent, 
-                "First Time Setup Notice",
+            msg_box = QMessageBox(self) 
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            msg_box.setWindowTitle("First Time Setup Notice")
+
+            msg_box.setText(
                 "Important: For RiftScope to correctly configure Roblox logging \n"
                 "on first launch, **Roblox must be closed before starting RiftScope.**\n\n"
                 "If Roblox is currently open, please:\n"
-                "1. Click OK on this message.\n"
+                "1. Wait 10 seconds, then click OK on this message.\n" 
                 "2. Close RiftScope.\n"
                 "3. Close Roblox.\n"
                 "4. Relaunch RiftScope (before starting Roblox).\n\n"
                 "This initial setup ensures detection works correctly with any Roblox launcher \n"
                 "(Fishstrap, Bloxstrap, or standard Roblox).\n"
-                "You only need to do this once.",
-                QMessageBox.StandardButton.Ok
+                "You only need to do this once. If you are using STOCK Roblox you must do this every update."
             )
-            temp_parent.deleteLater() 
+            ok_button = msg_box.addButton(QMessageBox.StandardButton.Ok)
+            ok_button.setEnabled(False) 
 
-        self.hotkey_listener = None 
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda: ok_button.setEnabled(True))
 
-        self.load_config()
+            self.update_status("Please read the first-time setup notice. OK button enabled in 10 seconds...")
+            timer.start(10000) 
+
+            clicked_button = msg_box.exec()
+
+            if clicked_button == QMessageBox.StandardButton.Ok:
+                self.tutorial_shown = True
+                self.save_config()
+                self.update_status("First-time setup notice acknowledged and saved.")
+            else:
+
+                self.update_status("First-time setup notice dismissed without acknowledging.")
+
+        self.hotkey_listener = None
+
         self.build_ui()
         self.apply_roblox_fastflags()
 
@@ -208,6 +236,24 @@ class RiftScopeApp(QMainWindow):
         self.update_prompt_signal.connect(self.prompt_update)
         self.update_checker_worker = Worker(self.check_for_updates)
         self.update_checker_worker.start()
+
+        self.SECRET_PETS = {
+            "Giant Chocolate Chicken", "Easter Basket", "MAN FACE GOD", "King Doggy",
+            "The Overlord", "Avernus", "Dementor", "Godly Gem"
+        }
+        self.LEGENDARY_PETS = {
+            "NULLVoid", "Cardinal Bunny", "Rainbow Marshmellow", "Rainbow Shock",
+            "Ethereal Bunny", "Hexarium", "Seraph", "Sweet Treat", "Abyssal Dragon",
+            "Beta TV", "Crescent Empress", "Dark Phoenix", "Dark Serpent", "Demonic Dogcat",
+            "Demonic Hydra", "Discord Imp", "Dowodle", "Dualcorn", "Easter Fluffle",
+            "Easter Serpent", "Electra", "Emerald Golem", "Evil Shock", "Flying Gem",
+            "Flying Pig", "Green Hydra", "Hacker Prism", "Holy Egg", "Holy Shock",
+            "Inferno Cube", "Inferno Dragon", "Infernus", "King Soul", "Kitsune",
+            "Lunar Deity", "Lunar Serpent", "Manarium", "Midas", "Moonburst",
+            "Neon Elemental", "Ophanim", "Patronus", "Rainbow Blitz", "Seraphic Bunny",
+            "Sigma Serpent", "Solar Deity", "Sunburst", "Trio Cube", "Umbra",
+            "Unicorn", "Virus"
+        }
 
     def build_ui(self):
         central_widget = QWidget()
@@ -331,8 +377,6 @@ class RiftScopeApp(QMainWindow):
 
         scanner_layout.addStretch() 
 
-        # --- Define Credits Tab Content --- 
-        # (Define it here, but add it to the widget later)
         credits_tab_widget = QWidget()
         credits_layout = QVBoxLayout(credits_tab_widget)
         credits_layout.setContentsMargins(15, 20, 15, 15)
@@ -356,7 +400,6 @@ class RiftScopeApp(QMainWindow):
         credits_layout.addWidget(digital_label)
 
         credits_layout.addStretch() 
-        # --- End Define Credits Tab Content ---
 
         self.pings_tab = QWidget()
         pings_layout = QVBoxLayout(self.pings_tab)
@@ -459,7 +502,59 @@ class RiftScopeApp(QMainWindow):
         collection_layout.addWidget(self.calibrate_coords_label)
         self._update_calibrate_button_text() 
 
+        collection_tutorial_label = QLabel(
+            'Collection Tutorial: <a href="https://www.youtube.com/watch?v=YOQQR3n8VE4">Watch Video</a>'
+        )
+        collection_tutorial_label.setTextFormat(Qt.TextFormat.RichText)
+        collection_tutorial_label.setOpenExternalLinks(True)
+        collection_tutorial_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        collection_layout.addWidget(collection_tutorial_label)
+
         collection_layout.addStretch()
+
+        self.hatch_tab = QWidget()
+        hatch_layout = QVBoxLayout(self.hatch_tab)
+        hatch_layout.setContentsMargins(15, 20, 15, 15)
+        hatch_layout.setSpacing(10)
+        collection_tab_index = self.tab_widget.indexOf(self.collection_tab) 
+        self.tab_widget.insertTab(collection_tab_index + 1, self.hatch_tab, "Hatch") 
+
+        hatch_title_label = QLabel("Hatch Settings")
+        hatch_title_font = QFont("Segoe UI", 12)
+        hatch_title_font.setBold(True)
+        hatch_title_label.setFont(hatch_title_font)
+        hatch_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hatch_layout.addWidget(hatch_title_label)
+
+        self.hatch_detection_enabled_checkbox = QCheckBox("Enable Hatch Detection")
+        if hasattr(self, 'hatch_detection_enabled'): 
+            self.hatch_detection_enabled_checkbox.setChecked(self.hatch_detection_enabled)
+        else:
+            self.hatch_detection_enabled_checkbox.setChecked(True) 
+        hatch_layout.addWidget(self.hatch_detection_enabled_checkbox)
+
+        self.hatch_username_label = QLabel("Username (for Secret Ping):") 
+        hatch_layout.addWidget(self.hatch_username_label)
+        self.hatch_username_entry = QLineEdit()
+        self.hatch_username_entry.setPlaceholderText("Enter the username for hatching")
+        if hasattr(self, 'hatch_username'):
+            self.hatch_username_entry.setText(self.hatch_username)
+        hatch_layout.addWidget(self.hatch_username_entry)
+
+        self.hatch_secret_ping_checkbox = QCheckBox("Secret Pets Ping")
+        if hasattr(self, 'hatch_secret_ping_enabled'):
+            self.hatch_secret_ping_checkbox.setChecked(self.hatch_secret_ping_enabled)
+        hatch_layout.addWidget(self.hatch_secret_ping_checkbox)
+
+        self.hatch_userid_label = QLabel("User ID to Ping:")
+        hatch_layout.addWidget(self.hatch_userid_label)
+        self.hatch_userid_entry = QLineEdit()
+        self.hatch_userid_entry.setPlaceholderText("Enter User ID to ping for secret pets")
+        if hasattr(self, 'hatch_secret_ping_user_id'):
+            self.hatch_userid_entry.setText(self.hatch_secret_ping_user_id)
+        hatch_layout.addWidget(self.hatch_userid_entry)
+
+        hatch_layout.addStretch()
 
         self.logs_tab = QWidget()
         logs_layout = QVBoxLayout(self.logs_tab)
@@ -473,10 +568,8 @@ class RiftScopeApp(QMainWindow):
              self.log_console.setFont(log_font)
         logs_layout.addWidget(self.log_console)
 
-        # --- Add Credits Tab at the end ---
-        self.credits_tab = credits_tab_widget # Assign the previously defined widget
+        self.credits_tab = credits_tab_widget 
         self.tab_widget.addTab(self.credits_tab, "Credits")
-        # --- End Add Credits Tab ---
 
     def run_test_scan(self):
         if self.test_running:
@@ -600,64 +693,102 @@ class RiftScopeApp(QMainWindow):
         print(formatted_log_message) 
 
     def apply_roblox_fastflags(self):
-        """Finds Roblox installations and applies FastFlag settings to all of them."""
+        """Finds Roblox installations and applies/updates FastFlag settings,
+           handling Bloxstrap/Fishstrap modification folders.
+        """
         local_app_data = os.getenv('LOCALAPPDATA')
         if not local_app_data:
             self.update_status("Error: LOCALAPPDATA environment variable not found.")
             return
 
-        launcher_paths = [
-            ('Roblox', os.path.join(local_app_data, 'Roblox', 'Versions')),
-            ('Bloxstrap', os.path.join(local_app_data, 'Bloxstrap', 'Roblox', 'Versions')),
-            ('Fishstrap', os.path.join(local_app_data, 'Fishstrap', 'Roblox', 'Versions'))
-        ]
+        required_flags = {
+            "FStringDebugLuaLogLevel": "trace",
+            "FStringDebugLuaLogPattern": "ExpChat/mountClientApp"
+        }
+        applied_count = 0
+        updated_count = 0
 
-        installed_count = 0
-
-        for launcher_name, versions_path in launcher_paths:
-            if not os.path.isdir(versions_path):
-                self.update_status(f"Info: {launcher_name} versions directory not found at {versions_path}")
-                continue
+        def update_json_file(json_file_path, launcher_info_str):
+            nonlocal applied_count, updated_count
+            current_settings = {}
+            needs_update = False
+            file_existed = False
+            file_dir = os.path.dirname(json_file_path)
 
             try:
-                roblox_folders = []
-                for version_folder in os.listdir(versions_path):
-                    potential_path = os.path.join(versions_path, version_folder)
-                    if os.path.isdir(potential_path):
-                        exe_path = os.path.join(potential_path, 'RobloxPlayerBeta.exe')
-                        if os.path.isfile(exe_path):
-                            roblox_folders.append(potential_path)
 
-                if not roblox_folders:
-                    self.update_status(f"Info: No RobloxPlayerBeta.exe found in {launcher_name} versions folder.")
-                    continue
+                os.makedirs(file_dir, exist_ok=True)
 
-                for folder in roblox_folders:
-                    client_settings_path = os.path.join(folder, 'ClientSettings')
-                    json_file_path = os.path.join(client_settings_path, 'ClientAppSettings.json')
-
-                    fastflags_config = {
-                        "FStringDebugLuaLogLevel": "trace",
-                        "FStringDebugLuaLogPattern": "ExpChat/mountClientApp"
-                    }
-
+                if os.path.exists(json_file_path):
+                    file_existed = True
                     try:
-                        os.makedirs(client_settings_path, exist_ok=True)
-                        with open(json_file_path, 'w') as f:
-                            json.dump(fastflags_config, f, indent=2)
-                        installed_count += 1
-                        self.update_status(f"Applied FastFlags to {launcher_name} at: {json_file_path}")
-                    except Exception as e:
-                        self.update_status(f"Error applying FastFlags to {launcher_name}: {e}")
+                        with open(json_file_path, 'r') as f:
+                            content = f.read()
+                            if content.strip(): 
+                                current_settings = json.loads(content)
+                            else:
+                                current_settings = {} 
+                    except json.JSONDecodeError:
+                        self.update_status(f"Warning: Corrupt JSON found at {json_file_path}. Overwriting for {launcher_info_str}.")
+                        current_settings = {}
+                        needs_update = True
+                    except Exception as read_err:
+                        self.update_status(f"Warning: Error reading {json_file_path}: {read_err}. Overwriting for {launcher_info_str}.")
+                        current_settings = {}
+                        needs_update = True
+                else:
 
+                    needs_update = True
+
+                for key, value in required_flags.items():
+                    if key not in current_settings or current_settings[key] != value:
+                        current_settings[key] = value
+                        needs_update = True
+
+                if needs_update:
+                    with open(json_file_path, 'w') as f:
+                        json.dump(current_settings, f, indent=2)
+                    if file_existed:
+                        updated_count += 1
+                        self.update_status(f"Updated FastFlags in {launcher_info_str} file")
+                    else:
+                        applied_count += 1
+                        self.update_status(f"Applied FastFlags to new file in {launcher_info_str}")
+
+            except Exception as e:
+
+                self.update_status(f"Error processing FastFlags for {launcher_info_str}: {e}")
+
+        mod_launchers_config_files = {
+            'Bloxstrap': os.path.join(local_app_data, 'Bloxstrap', 'Modifications', 'ClientSettings', 'ClientAppSettings.json'),
+            'Fishstrap': os.path.join(local_app_data, 'Fishstrap', 'Modifications', 'ClientSettings', 'ClientAppSettings.json')
+        }
+
+        for launcher_name, target_json_path in mod_launchers_config_files.items():
+
+            launcher_base_dir = os.path.dirname(os.path.dirname(os.path.dirname(target_json_path)))
+            if os.path.isdir(launcher_base_dir):
+                update_json_file(target_json_path, f"{launcher_name} Modifications")
+
+        roblox_versions_path = os.path.join(local_app_data, 'Roblox', 'Versions')
+        if os.path.isdir(roblox_versions_path):
+            try:
+                for item_name in os.listdir(roblox_versions_path):
+                    item_path = os.path.join(roblox_versions_path, item_name)
+
+                    if os.path.isdir(item_path) and item_name.startswith("version-"):
+                        version_folder_path = item_path
+                        client_settings_path = os.path.join(version_folder_path, 'ClientSettings')
+                        json_file_path = os.path.join(client_settings_path, 'ClientAppSettings.json')
+
+                        update_json_file(json_file_path, f"Roblox/{item_name}")
             except OSError as e:
-                self.update_status(f"Error accessing {launcher_name} versions directory: {e}")
-                continue
+                self.update_status(f"Error accessing Roblox versions directory: {e}")
 
-        if installed_count > 0:
-            self.update_status(f"Successfully applied FastFlags to {installed_count} Roblox installation(s)")
+        if applied_count > 0 or updated_count > 0:
+            self.update_status(f"Finished applying/updating FastFlags ({applied_count} new, {updated_count} updated)." )
         else:
-            self.update_status("Warning: Could not apply FastFlags to any Roblox installation")
+            self.update_status("FastFlags check complete. No changes needed or relevant folders found.")
 
     def load_config(self):
         try:
@@ -687,6 +818,13 @@ class RiftScopeApp(QMainWindow):
                     else:
                         self.teleport_coords = None
 
+                    self.hatch_username = config.get('hatch_username', '')
+                    self.hatch_secret_ping_enabled = config.get('hatch_secret_ping_enabled', False)
+                    self.hatch_secret_ping_user_id = config.get('hatch_secret_ping_user_id', '')
+                    self.hatch_detection_enabled = config.get('hatch_detection_enabled', True) 
+
+                    self.tutorial_shown = config.get('tutorial_shown', False)
+
                     if hasattr(self, 'webhook_entry'):
                          self.webhook_entry.setText(self.webhook_url)
                     if hasattr(self, 'pslink_entry'):
@@ -715,6 +853,12 @@ class RiftScopeApp(QMainWindow):
                 self.collection_enabled = False
                 self.teleport_coords = None
 
+                self.hatch_username = ''
+                self.hatch_secret_ping_enabled = False
+                self.hatch_secret_ping_user_id = ''
+                self.hatch_detection_enabled = True 
+                self.tutorial_shown = False 
+
         except Exception as e:
             print(f"Error loading config: {e}")
             self.webhook_url = ''
@@ -728,23 +872,35 @@ class RiftScopeApp(QMainWindow):
             self.collection_enabled = False
             self.teleport_coords = None
 
+            self.hatch_username = ''
+            self.hatch_secret_ping_enabled = False
+            self.hatch_secret_ping_user_id = ''
+            self.hatch_detection_enabled = True 
+            self.tutorial_shown = False 
+
     def save_config(self):
         try:
             config_dir = os.path.dirname(self.config_file)
             os.makedirs(config_dir, exist_ok=True)
 
             config = {
-                'webhook_url': self.webhook_entry.text().strip(),
-                'ps_link': self.pslink_entry.text().strip() ,
-                'royal_chest_ping_id': self.royal_chest_ping_entry.text().strip(),
-                'royal_chest_ping_type': self.royal_chest_ping_type_combo.currentText(),
-                'gum_rift_ping_id': self.gum_rift_ping_entry.text().strip(),
-                'gum_rift_ping_type': self.gum_rift_ping_type_combo.currentText(),
-                'launcher_choice': self.launcher_combo.currentText(),
 
-                'collection_enabled': self.collection_enabled_checkbox.isChecked() if hasattr(self, 'collection_enabled_checkbox') else self.collection_enabled,
-                'teleport_coords': self.teleport_coords 
+                'webhook_url': self.webhook_entry.text().strip() if hasattr(self, 'webhook_entry') else getattr(self, 'webhook_url', ''),
+                'ps_link': self.pslink_entry.text().strip() if hasattr(self, 'pslink_entry') else getattr(self, 'ps_link', ''),
+                'royal_chest_ping_id': self.royal_chest_ping_entry.text().strip() if hasattr(self, 'royal_chest_ping_entry') else getattr(self, 'royal_chest_ping_id', ''),
+                'royal_chest_ping_type': self.royal_chest_ping_type_combo.currentText() if hasattr(self, 'royal_chest_ping_type_combo') else getattr(self, 'royal_chest_ping_type', 'User'),
+                'gum_rift_ping_id': self.gum_rift_ping_entry.text().strip() if hasattr(self, 'gum_rift_ping_entry') else getattr(self, 'gum_rift_ping_id', ''),
+                'gum_rift_ping_type': self.gum_rift_ping_type_combo.currentText() if hasattr(self, 'gum_rift_ping_type_combo') else getattr(self, 'gum_rift_ping_type', 'User'),
+                'launcher_choice': self.launcher_combo.currentText() if hasattr(self, 'launcher_combo') else getattr(self, 'launcher_choice', 'Auto'),
 
+                'collection_enabled': self.collection_enabled_checkbox.isChecked() if hasattr(self, 'collection_enabled_checkbox') else getattr(self, 'collection_enabled', False),
+                'teleport_coords': self.teleport_coords, 
+
+                'hatch_username': self.hatch_username_entry.text().strip() if hasattr(self, 'hatch_username_entry') else getattr(self, 'hatch_username', ''),
+                'hatch_secret_ping_enabled': self.hatch_secret_ping_checkbox.isChecked() if hasattr(self, 'hatch_secret_ping_checkbox') else getattr(self, 'hatch_secret_ping_enabled', False),
+                'hatch_secret_ping_user_id': self.hatch_userid_entry.text().strip() if hasattr(self, 'hatch_userid_entry') else getattr(self, 'hatch_secret_ping_user_id', ''),
+                'hatch_detection_enabled': self.hatch_detection_enabled_checkbox.isChecked() if hasattr(self, 'hatch_detection_enabled_checkbox') else getattr(self, 'hatch_detection_enabled', True),
+                'tutorial_shown': getattr(self, 'tutorial_shown', False) 
             }
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=4)
@@ -1060,48 +1216,134 @@ class RiftScopeApp(QMainWindow):
                             pass 
 
                     timestamp = self.extract_timestamp(line)
+                    current_time = time.time() 
 
-                    if "🔮" in line: 
-                        if self.monitor_thread:
-                            self.monitor_thread.update_status_signal.emit("✨ Royal chest detected!")
-                            ping_id = self.royal_chest_ping_entry.text().strip()
-                            ping_type = self.royal_chest_ping_type_combo.currentText()
-                            ping_mention = f"<@{ping_id}>" if ping_type == "User" else f"<@&{ping_id}>"
-                            self.monitor_thread.webhook_signal.emit(
-                                "✨ ROYAL CHEST DETECTED! ✨",
-                                f"A royal chest has been found in the chat!", 
-                                self.royal_image_url,
-                                0x9b59b6,
-                                ping_mention if ping_id else None
-                            )
+                    hatch_pattern = re.compile(r'<b><font color="#[0-9a-fA-F]{6}">([^<]+)</font> just hatched a <font color="([^"]+)">([^<]+?)(?: \(([^)]+%)\))?</font></b>') 
+
+                    if "🔮" in line:
+                        if current_time - self.last_royal_chest_time > self.EVENT_COOLDOWN_SECONDS:
+                            if self.monitor_thread:
+                                self.monitor_thread.update_status_signal.emit("✨ Royal chest detected!")
+                                ping_id = self.royal_chest_ping_entry.text().strip()
+                                ping_type = self.royal_chest_ping_type_combo.currentText()
+                                ping_mention = f"<@{ping_id}>" if ping_type == "User" else f"<@&{ping_id}>"
+                                self.monitor_thread.webhook_signal.emit(
+                                    "✨ ROYAL CHEST DETECTED! ✨",
+                                    f"A royal chest has been found in the chat!",
+                                    self.royal_image_url,
+                                    0x9b59b6,
+                                    ping_mention if ping_id else None
+                                )
+                            self.last_royal_chest_time = current_time 
+                        else:
+                             if self.monitor_thread:
+                                self.monitor_thread.update_status_signal.emit("Royal chest detected (Cooldown). Skipping ping.")
 
                     elif "Bring us your gum, Earthlings!" in line:
-                        if self.monitor_thread:
-                            self.monitor_thread.update_status_signal.emit("🫧 Gum Rift detected!")
-                            ping_id = self.gum_rift_ping_entry.text().strip()
-                            ping_type = self.gum_rift_ping_type_combo.currentText()
-                            ping_mention = f"<@{ping_id}>" if ping_type == "User" else f"<@&{ping_id}>"
-                            self.monitor_thread.webhook_signal.emit(
-                                "🫧 GUM RIFT DETECTED! 🫧",
-                                f"A gum rift has been found in the chat!",
-                                None,
-                                0xFF69B4,
-                                ping_mention if ping_id else None
-                            )
+                         if current_time - self.last_gum_rift_time > self.EVENT_COOLDOWN_SECONDS:
+                            if self.monitor_thread:
+                                self.monitor_thread.update_status_signal.emit("🫧 Gum Rift detected!")
+                                ping_id = self.gum_rift_ping_entry.text().strip()
+                                ping_type = self.gum_rift_ping_type_combo.currentText()
+                                ping_mention = f"<@{ping_id}>" if ping_type == "User" else f"<@&{ping_id}>"
+                                self.monitor_thread.webhook_signal.emit(
+                                    "🫧 GUM RIFT DETECTED! 🫧",
+                                    f"A gum rift has been found in the chat!",
+                                    None,
+                                    0xFF69B4,
+                                    ping_mention if ping_id else None
+                                )
+                            self.last_gum_rift_time = current_time 
+                         else:
+                             if self.monitor_thread:
+                                self.monitor_thread.update_status_signal.emit("Gum rift detected (Cooldown). Skipping ping.")
 
-                    elif "aura" in line.lower(): 
+                    elif "aura" in line.lower():
+
                         if self.monitor_thread:
                             self.monitor_thread.update_status_signal.emit("🌟 Aura egg detected!")
                             self.monitor_thread.webhook_signal.emit(
                                 "🌟 AURA EGG DETECTED! 🌟",
-                                f"An aura egg has been found in the chat!", 
+                                f"An aura egg has been found in the chat!",
                                 self.aura_image_url,
                                 0x3498db,
-                                "@everyone"
+                                "@everyone" 
                             )
+                        self.last_aura_egg_time = current_time 
 
-                    if timestamp:
-                        self.last_timestamp = max(self.last_timestamp or 0, timestamp)
+                    elif self.hatch_detection_enabled_checkbox.isChecked() and "just hatched a" in line:
+                        print(f"[DEBUG] Found 'just hatched a' in line: {line.strip()}") 
+                        match = hatch_pattern.search(line)
+                        if match:
+                            print("[DEBUG] Regex match successful!") 
+                            hatched_username = match.group(1)
+                            pet_color_hex = match.group(2)
+                            pet_name = match.group(3).strip() 
+                            rarity_match = match.group(4) 
+
+                            rarity = rarity_match if rarity_match else "Unknown Rarity"
+
+                            print(f"[DEBUG] Extracted: User='{hatched_username}', Pet='{pet_name}', Rarity='{rarity}'") 
+
+                            base_pet_name = pet_name
+                            mutation_prefix = ""
+                            if pet_name.startswith("Shiny Mythic "):
+                                mutation_prefix = "Shiny Mythic "
+                                base_pet_name = pet_name[len(mutation_prefix):]
+                            elif pet_name.startswith("Mythic "):
+                                mutation_prefix = "Mythic "
+                                base_pet_name = pet_name[len(mutation_prefix):]
+                            elif pet_name.startswith("Shiny "):
+                                mutation_prefix = "Shiny "
+                                base_pet_name = pet_name[len(mutation_prefix):]
+
+                            if mutation_prefix:
+                                print(f"[DEBUG] Mutation detected. Base Pet Name for check: '{base_pet_name}'")
+
+                            is_secret = base_pet_name in self.SECRET_PETS
+                            is_legendary = base_pet_name in self.LEGENDARY_PETS
+                            print(f"[DEBUG] Is Base Secret: {is_secret}, Is Base Legendary: {is_legendary}") 
+
+                            if is_secret or is_legendary:
+                                print(f"[DEBUG] Base Pet ('{base_pet_name}') is Secret or Legendary.") 
+
+                                cooldown_check = current_time - self.last_hatch_ping_time
+                                print(f"[DEBUG] Time since last hatch: {cooldown_check:.2f}s (Cooldown: {self.EVENT_COOLDOWN_SECONDS}s)") 
+                                if cooldown_check > self.EVENT_COOLDOWN_SECONDS:
+                                    print("[DEBUG] Cooldown passed.") 
+                                    if self.monitor_thread:
+                                        print("[DEBUG] Monitor thread exists. Sending status/webhook.") 
+                                        pet_type = "Secret" if is_secret else "Legendary"
+
+                                        self.monitor_thread.update_status_signal.emit(f"🎉 {pet_type} Pet Hatched by {hatched_username}: {pet_name} ({rarity})") 
+
+                                        ping_content = None
+                                        target_username = self.hatch_username_entry.text().strip()
+                                        ping_user_id = self.hatch_userid_entry.text().strip()
+
+                                        if is_secret and self.hatch_secret_ping_checkbox.isChecked() and ping_user_id and target_username and hatched_username.lower() == target_username.lower():
+                                            ping_content = f"<@{ping_user_id}>"
+
+                                        try:
+                                            embed_color = int(pet_color_hex.lstrip('#'), 16)
+                                        except ValueError:
+                                            embed_color = 0x7289DA 
+
+                                        self.monitor_thread.webhook_signal.emit(
+                                            f"🎉 {pet_type.upper()} PET HATCHED! 🎉",
+                                            f"**User:** {hatched_username}\n"
+                                            f"**Pet:** {pet_name}\n"
+                                            f"**Rarity:** {rarity}",
+                                            None, 
+                                            embed_color,
+                                            ping_content 
+                                        )
+                                    self.last_hatch_ping_time = current_time 
+                                else: 
+                                    if self.monitor_thread:
+                                        pet_type = "Secret" if is_secret else "Legendary"
+
+                                        self.monitor_thread.update_status_signal.emit(f"{pet_type} hatch detected for {hatched_username} (Cooldown). Skipping ping.")
 
                 if new_line_found:
                     self.last_line_time = time.time() 
@@ -1163,6 +1405,11 @@ class RiftScopeApp(QMainWindow):
 
         self.collection_enabled_checkbox.setEnabled(False)
         self.calibrate_button.setEnabled(False)
+
+        self.hatch_detection_enabled_checkbox.setEnabled(False) 
+        self.hatch_username_entry.setEnabled(False)
+        self.hatch_secret_ping_checkbox.setEnabled(False)
+        self.hatch_userid_entry.setEnabled(False)
 
         self.update_status("🔍 Scanning started...")
 
@@ -1232,6 +1479,11 @@ class RiftScopeApp(QMainWindow):
             self.collection_enabled_checkbox.setEnabled(True)
             self.calibrate_button.setEnabled(True)
 
+            self.hatch_detection_enabled_checkbox.setEnabled(True) 
+            self.hatch_username_entry.setEnabled(True)
+            self.hatch_secret_ping_checkbox.setEnabled(True)
+            self.hatch_userid_entry.setEnabled(True)
+
             self.update_status("Scanner/Collection stopped. Ready again.")
 
     def on_monitor_finished(self):
@@ -1253,6 +1505,11 @@ class RiftScopeApp(QMainWindow):
 
             self.collection_enabled_checkbox.setEnabled(True)
             self.calibrate_button.setEnabled(True)
+
+            self.hatch_detection_enabled_checkbox.setEnabled(True) 
+            self.hatch_username_entry.setEnabled(True)
+            self.hatch_secret_ping_checkbox.setEnabled(True)
+            self.hatch_userid_entry.setEnabled(True)
 
             self.update_status("Scanner stopped. Ready to scan again.")
 
@@ -1408,9 +1665,13 @@ class RiftScopeApp(QMainWindow):
 
             batch_script_content = f"""
 @echo off
-echo Waiting for RiftScope to close...
-timeout /t 4 /nobreak > NUL
-echo Replacing executable...
+echo Update downloaded.
+echo Please close the main RiftScope application now.
+
+echo Press any key AFTER closing RiftScope to continue the update...
+pause > NUL 
+
+echo Attempting to replace executable...
 
 :delete_loop
 del {quoted_current_exe} > nul 2>&1
@@ -1441,30 +1702,14 @@ echo Exiting updater script...
             with open(updater_bat_path, 'w') as f:
                 f.write(batch_script_content)
 
-            self.update_status("Update downloaded. Restarting application to apply...")
+            self.update_status("Update downloaded. Please close RiftScope now to apply the update.")
 
-            subprocess.Popen(['cmd.exe', '/c', updater_bat_path], 
-                             creationflags=subprocess.CREATE_NEW_CONSOLE, 
-                             close_fds=True) 
-
-            QApplication.instance().quit()
+            subprocess.Popen(['cmd.exe', '/c', updater_bat_path],
+                             creationflags=subprocess.CREATE_NEW_CONSOLE,
+                             close_fds=True)
 
         except requests.exceptions.RequestException as e:
             self.update_status(f"Update failed: Download error ({e})")
-            print(f"Error downloading update: {e}")
-        except IOError as e:
-            self.update_status(f"Update failed: File error ({e})")
-            print(f"Error writing update file or batch script: {e}")
-        except Exception as e:
-            self.update_status(f"Update failed: An unexpected error occurred ({e})")
-            print(f"An unexpected error occurred during update process: {e}")
-
-            if os.path.exists(new_exe_temp_path):
-                try: os.remove(new_exe_temp_path) 
-                except OSError: pass
-            if os.path.exists(updater_bat_path):
-                try: os.remove(updater_bat_path) 
-                except OSError: pass
 
     def start_calibration(self):
         if self.calibrating:
