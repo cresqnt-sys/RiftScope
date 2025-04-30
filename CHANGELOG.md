@@ -4,7 +4,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (starting from 1.0.0-Alpha).
 
-## [1.2.1-Stable] - 2024-04-27
+## [1.2.5-Beta] - 2025-04-29
+
+### Added
+- **Public Server Mode**:
+    - Added auto-detection of server changes using JobID and PlaceID.
+    - Implemented fetching of RoPro short links for public server notifications.
+    - Added popup warning when switching to Public Server mode, reminding user to start RiftScope before Roblox.
+    - Improved logging for server detection events.
+- **Updated Pet Lists**: Added new Secret (Royal Trophy, Silly Doggy :) ) and Legendary pets (Chocolate Bunny, Diamond Hexarium, Diamond Serpent, DOOF, Electra Hydra, Elite Challenger, Elite Soul, Enraged Phoenix, King Pufferfish, Overseer, Parasite, ROUND, Starlight) to detection lists.
+
+### Changed
+- **Event Notification System**: Replaced fixed cooldown with timestamp-based deduplication for Royal Chest, Gum Rift, and Silly Egg events to prevent missed pings.
+- **Public Server Popup**: Popup now only appears on user interaction, not on initial startup if Public Server mode is already selected.
+- Improved robustness of auto-updater version comparison.
+- Refactored the whole codebase in preperation for bigger updates.
+
+### Fixed
+- Resolved issue where the "Stop Scanning" button required two clicks to fully stop processes.
+- Fixed `NameError: name 'time' is not defined` in `detection.py`.
+- Corrected removal of `processed_hatch_timestamps` during Aura Egg removal.
+
+## [1.2.1-Stable] - 2025-04-27
 
 ### Added
 - **Silly Egg Detection**: Detects the "we're so silly and fun" message, sending a webhook with 😂 emoji and forcing an `@everyone` ping.
