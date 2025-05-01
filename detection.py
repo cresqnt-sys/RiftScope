@@ -9,16 +9,12 @@ class RiftDetector:
     
     def __init__(self, app=None):
         self.app = app
-        self.processed_royal_chest_timestamps = set()
-        self.processed_gum_rift_timestamps = set()
-        self.processed_aura_egg_timestamps = set()
-        self.processed_hatch_timestamps = set()
-        self.processed_silly_egg_timestamps = set()
         self.processed_lines = set()
         self.current_log = None
         self.last_line_time = time.time()
         self.last_timestamp = None
         self.lock_log_file = False
+        self.last_notification_time = {} # Store last notification time per event type
         
         # Server tracking
         self.current_job_id = None
@@ -295,7 +291,8 @@ class RiftDetector:
                             pass 
 
                     timestamp = extract_timestamp(line)
-                    current_time = time.time()
+                    current_real_time = time.time() # Use current time for cooldown checks
+                    cooldown_seconds = 2.0 # Cooldown period in seconds
                     
                     # Regex pattern for hatch detection
                     hatch_pattern = re.compile(r'<b><font color="#[0-9a-fA-F]{6}">([^<]+)</font> just hatched a <font color="([^"]+)">([^<]+?)(?: \(([^)]+%)\))?</font></b>')
@@ -308,9 +305,9 @@ class RiftDetector:
                     
                     # Royal chest detection
                     if "🔮" in line:
-                        # Use timestamp-based deduplication
-                        if line_timestamp and line_timestamp not in self.processed_royal_chest_timestamps:
-                            self.processed_royal_chest_timestamps.add(line_timestamp)
+                        # Check cooldown before processing
+                        last_sent = self.last_notification_time.get('royal_chest', 0)
+                        if current_real_time - last_sent >= cooldown_seconds:
                             if hasattr(self, 'monitor_thread') and self.monitor_thread:
                                 self.monitor_thread.update_status_signal.emit("✨ Royal chest detected!")
                                 ping_id = self.app.royal_chest_ping_entry.text().strip()
@@ -323,14 +320,16 @@ class RiftDetector:
                                     0x9b59b6,
                                     ping_mention if ping_id else None
                                 )
-                        else:
-                            if hasattr(self, 'monitor_thread') and self.monitor_thread:
-                                self.monitor_thread.update_status_signal.emit("Royal chest detected (duplicate). Skipping ping.")
+                                self.last_notification_time['royal_chest'] = current_real_time # Update last sent time
+                        # else: # Optional: Log cooldown skip
+                        #    if hasattr(self, 'monitor_thread') and self.monitor_thread:
+                        #        self.monitor_thread.update_status_signal.emit("Royal chest detected (cooldown). Skipping ping.")
 
                     # Gum rift detection
                     elif "Bring us your gum, Earthlings!" in line:
-                        if line_timestamp and line_timestamp not in self.processed_gum_rift_timestamps:
-                            self.processed_gum_rift_timestamps.add(line_timestamp)
+                        # Check cooldown before processing
+                        last_sent = self.last_notification_time.get('gum_rift', 0)
+                        if current_real_time - last_sent >= cooldown_seconds:
                             if hasattr(self, 'monitor_thread') and self.monitor_thread:
                                 self.monitor_thread.update_status_signal.emit("🫧 Gum Rift detected!")
                                 ping_id = self.app.gum_rift_ping_entry.text().strip()
@@ -343,14 +342,16 @@ class RiftDetector:
                                     0xFF69B4,
                                     ping_mention if ping_id else None
                                 )
-                        else:
-                            if hasattr(self, 'monitor_thread') and self.monitor_thread:
-                                self.monitor_thread.update_status_signal.emit("Gum rift detected (duplicate). Skipping ping.")
+                                self.last_notification_time['gum_rift'] = current_real_time # Update last sent time
+                        # else: # Optional: Log cooldown skip
+                        #    if hasattr(self, 'monitor_thread') and self.monitor_thread:
+                        #        self.monitor_thread.update_status_signal.emit("Gum rift detected (cooldown). Skipping ping.")
 
                     # Silly egg detection
                     elif "we're so silly and fun" in line:
-                        if line_timestamp and line_timestamp not in self.processed_silly_egg_timestamps:
-                            self.processed_silly_egg_timestamps.add(line_timestamp)
+                        # Check cooldown before processing
+                        last_sent = self.last_notification_time.get('silly_egg', 0)
+                        if current_real_time - last_sent >= cooldown_seconds:
                             if hasattr(self, 'monitor_thread') and self.monitor_thread:
                                 self.monitor_thread.update_status_signal.emit("😂 Silly Egg detected!")
                                 self.monitor_thread.webhook_signal.emit(
@@ -360,9 +361,10 @@ class RiftDetector:
                                     0xf1c40f, 
                                     "@everyone" 
                                 )
-                        else:
-                            if hasattr(self, 'monitor_thread') and self.monitor_thread:
-                                self.monitor_thread.update_status_signal.emit("Silly egg detected (duplicate). Skipping ping.")
+                                self.last_notification_time['silly_egg'] = current_real_time # Update last sent time
+                        # else: # Optional: Log cooldown skip
+                        #    if hasattr(self, 'monitor_thread') and self.monitor_thread:
+                        #        self.monitor_thread.update_status_signal.emit("Silly egg detected (cooldown). Skipping ping.")
 
                     # Hatch detection
                     elif (self.app and hasattr(self.app, 'hatch_detection_enabled_checkbox') and 
@@ -370,7 +372,8 @@ class RiftDetector:
                         print(f"[DEBUG] Found 'just hatched a' in line: {line.strip()}") 
                         match = hatch_pattern.search(line)
                         if match:
-                            self.process_hatch_match(match, current_time, line_timestamp)
+                            # Pass current_real_time for cooldown check within the function
+                            self.process_hatch_match(match, current_time, line_timestamp, current_real_time)
                             
                 if new_line_found:
                     self.last_line_time = time.time() 
@@ -613,7 +616,7 @@ class RiftDetector:
                 
         return ""
     
-    def process_hatch_match(self, match, current_time, line_timestamp=None):
+    def process_hatch_match(self, match, current_time, line_timestamp=None, current_real_time=None):
         """Process a regex match for hatched pet"""
         print("[DEBUG] Regex match successful!") 
         hatched_username = match.group(1)
@@ -651,45 +654,49 @@ class RiftDetector:
             if target_username and hatched_username.lower() == target_username.lower():
                 print(f"[DEBUG] Username '{hatched_username}' matches target '{target_username}'. Proceeding...")
 
-                # Check if this hatch event has already been processed
-                if line_timestamp and line_timestamp in self.processed_hatch_timestamps:
-                    print("[DEBUG] Duplicate hatch event detected. Skipping notification.")
+                # Check cooldown before processing hatch notification
+                if current_real_time is None: # Fallback if not passed
+                     current_real_time = time.time()
+                cooldown_seconds = 2.0
+                last_sent = self.last_notification_time.get('hatch', 0)
+
+                if current_real_time - last_sent >= cooldown_seconds:
+                    print("[DEBUG] Cooldown passed for hatch event.")
                     if hasattr(self, 'monitor_thread') and self.monitor_thread:
+                        print("[DEBUG] Monitor thread exists. Sending status/webhook.")
                         pet_type = "Secret" if is_secret else "Legendary"
-                        self.monitor_thread.update_status_signal.emit(f"{pet_type} hatch detected for {hatched_username} (duplicate). Skipping ping.")
-                    return
 
-                # Store the timestamp to prevent duplicate notifications
-                if line_timestamp:
-                    self.processed_hatch_timestamps.add(line_timestamp)
-                
-                print("[DEBUG] New hatch event.")
-                if hasattr(self, 'monitor_thread') and self.monitor_thread:
-                    print("[DEBUG] Monitor thread exists. Sending status/webhook.")
-                    pet_type = "Secret" if is_secret else "Legendary"
+                        self.monitor_thread.update_status_signal.emit(f"🎉 {pet_type} Pet Hatched by {hatched_username}: {pet_name} ({rarity})")
 
-                    self.monitor_thread.update_status_signal.emit(f"🎉 {pet_type} Pet Hatched by {hatched_username}: {pet_name} ({rarity})")
+                        ping_content = None
+                        ping_user_id = self.app.hatch_userid_entry.text().strip()
 
-                    ping_content = None
-                    ping_user_id = self.app.hatch_userid_entry.text().strip()
+                        if is_secret and self.app.hatch_secret_ping_checkbox.isChecked() and ping_user_id:
+                            ping_content = f"<@{ping_user_id}>"
 
-                    if is_secret and self.app.hatch_secret_ping_checkbox.isChecked() and ping_user_id:
-                        ping_content = f"<@{ping_user_id}>"
+                        try:
+                            embed_color = int(pet_color_hex.lstrip('#'), 16)
+                        except ValueError:
+                            embed_color = 0x7289DA
 
-                    try:
-                        embed_color = int(pet_color_hex.lstrip('#'), 16)
-                    except ValueError:
-                        embed_color = 0x7289DA
+                        self.monitor_thread.webhook_signal.emit(
+                            f"🎉 {pet_type.upper()} PET HATCHED! 🎉",
+                            f"**User:** {hatched_username}\n"
+                            f"**Pet:** {pet_name}\n"
+                            f"**Rarity:** {rarity}",
+                            None,
+                            embed_color,
+                            ping_content
+                        )
+                        # Update last sent time only after successfully sending
+                        self.last_notification_time['hatch'] = current_real_time 
+                else:
+                     print("[DEBUG] Hatch event skipped due to cooldown.")
+                     # Optional: Log cooldown skip
+                     if hasattr(self, 'monitor_thread') and self.monitor_thread:
+                         pet_type = "Secret" if is_secret else "Legendary"
+                         self.monitor_thread.update_status_signal.emit(f"{pet_type} hatch detected for {hatched_username} (cooldown). Skipping ping.")
 
-                    self.monitor_thread.webhook_signal.emit(
-                        f"🎉 {pet_type.upper()} PET HATCHED! 🎉",
-                        f"**User:** {hatched_username}\n"
-                        f"**Pet:** {pet_name}\n"
-                        f"**Rarity:** {rarity}",
-                        None,
-                        embed_color,
-                        ping_content
-                    )
             else:
                 print(f"[DEBUG] Username '{hatched_username}' does not match target '{target_username}' or target is empty. Skipping notification.")
                 

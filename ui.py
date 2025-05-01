@@ -75,7 +75,7 @@ QPushButton:disabled {{
 class RiftScopeApp(QMainWindow):
     """Main application window for RiftScope"""
     
-    APP_VERSION = "1.2.5-Beta"
+    APP_VERSION = "1.2.6-Hotfix"
     REPO_URL = "cresqnt-sys/RiftScope"
     
     update_prompt_signal = pyqtSignal(str, str)
