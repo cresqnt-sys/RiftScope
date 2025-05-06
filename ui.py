@@ -75,7 +75,7 @@ QPushButton:disabled {{
 class RiftScopeApp(QMainWindow):
     """Main application window for RiftScope"""
     
-    APP_VERSION = "1.2.6-Hotfix"
+    APP_VERSION = "1.2.7-Stable"
     REPO_URL = "cresqnt-sys/RiftScope"
     
     update_prompt_signal = pyqtSignal(str, str)
@@ -360,6 +360,21 @@ class RiftScopeApp(QMainWindow):
         self.gum_rift_ping_type_combo.addItem("Role")
         self.gum_rift_ping_type_combo.setFixedWidth(60) 
         pings_grid_layout.addWidget(self.gum_rift_ping_type_combo, 1, 2)
+
+        # Dice Chest ping settings
+        self.dice_chest_ping_label = QLabel("Dice Chest Ping:")
+        self.dice_chest_ping_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        pings_grid_layout.addWidget(self.dice_chest_ping_label, 2, 0)
+
+        self.dice_chest_ping_entry = QLineEdit()
+        self.dice_chest_ping_entry.setPlaceholderText("Enter User/Role ID (Optional)")
+        pings_grid_layout.addWidget(self.dice_chest_ping_entry, 2, 1)
+
+        self.dice_chest_ping_type_combo = QComboBox()
+        self.dice_chest_ping_type_combo.addItem("User")
+        self.dice_chest_ping_type_combo.addItem("Role")
+        self.dice_chest_ping_type_combo.setFixedWidth(60) 
+        pings_grid_layout.addWidget(self.dice_chest_ping_type_combo, 2, 2)
 
         # Silly Egg ping (fixed to @everyone)
         self.silly_egg_ping_label = QLabel("Silly Egg Ping:")
@@ -685,6 +700,8 @@ class RiftScopeApp(QMainWindow):
         self.royal_chest_ping_type_combo.setEnabled(False)
         self.gum_rift_ping_entry.setEnabled(False)
         self.gum_rift_ping_type_combo.setEnabled(False)
+        self.dice_chest_ping_entry.setEnabled(False)
+        self.dice_chest_ping_type_combo.setEnabled(False)
         self.collection_enabled_checkbox.setEnabled(False)
         self.calibrate_button.setEnabled(False)
         self.hatch_detection_enabled_checkbox.setEnabled(False) 
@@ -768,6 +785,8 @@ class RiftScopeApp(QMainWindow):
         self.royal_chest_ping_type_combo.setEnabled(True)
         self.gum_rift_ping_entry.setEnabled(True)
         self.gum_rift_ping_type_combo.setEnabled(True)
+        self.dice_chest_ping_entry.setEnabled(True)
+        self.dice_chest_ping_type_combo.setEnabled(True)
         self.collection_enabled_checkbox.setEnabled(True)
         self.calibrate_button.setEnabled(True)
         self.hatch_detection_enabled_checkbox.setEnabled(True) 

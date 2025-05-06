@@ -366,6 +366,28 @@ class RiftDetector:
                         #    if hasattr(self, 'monitor_thread') and self.monitor_thread:
                         #        self.monitor_thread.update_status_signal.emit("Silly egg detected (cooldown). Skipping ping.")
 
+                    # Dice Chest detection
+                    elif "Feeling lucky..?" in line:
+                        # Check cooldown before processing
+                        last_sent = self.last_notification_time.get('dice_chest', 0)
+                        if current_real_time - last_sent >= cooldown_seconds:
+                            if hasattr(self, 'monitor_thread') and self.monitor_thread:
+                                self.monitor_thread.update_status_signal.emit("🎲 Dice Chest detected!")
+                                ping_id = self.app.dice_chest_ping_entry.text().strip()
+                                ping_type = self.app.dice_chest_ping_type_combo.currentText()
+                                ping_mention = f"<@{ping_id}>" if ping_type == "User" else f"<@&{ping_id}>"
+                                self.monitor_thread.webhook_signal.emit(
+                                    "🎲 DICE CHEST DETECTED! 🎲",
+                                    f"A dice chest has been found in the chat!",
+                                    None,
+                                    0x3498db,
+                                    ping_mention if ping_id else None
+                                )
+                                self.last_notification_time['dice_chest'] = current_real_time # Update last sent time
+                        # else: # Optional: Log cooldown skip
+                        #    if hasattr(self, 'monitor_thread') and self.monitor_thread:
+                        #        self.monitor_thread.update_status_signal.emit("Dice chest detected (cooldown). Skipping ping.")
+
                     # Hatch detection
                     elif (self.app and hasattr(self.app, 'hatch_detection_enabled_checkbox') and 
                          self.app.hatch_detection_enabled_checkbox.isChecked() and "just hatched a" in line):

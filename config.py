@@ -95,6 +95,8 @@ class Config:
         self.royal_chest_ping_type = 'User'
         self.gum_rift_ping_id = ''
         self.gum_rift_ping_type = 'User'
+        self.dice_chest_ping_id = ''
+        self.dice_chest_ping_type = 'User'
         self.launcher_choice = 'Auto'
         self.server_mode = 'Private Server'
         self.collection_enabled = False
@@ -127,6 +129,8 @@ class Config:
                     self.royal_chest_ping_type = config.get('royal_chest_ping_type', 'User')
                     self.gum_rift_ping_id = config.get('gum_rift_ping_id', '')
                     self.gum_rift_ping_type = config.get('gum_rift_ping_type', 'User')
+                    self.dice_chest_ping_id = config.get('dice_chest_ping_id', '')
+                    self.dice_chest_ping_type = config.get('dice_chest_ping_type', 'User')
                     self.launcher_choice = config.get('launcher_choice', 'Auto')
                     self.server_mode = config.get('server_mode', 'Private Server')
 
@@ -171,6 +175,8 @@ class Config:
                     'royal_chest_ping_type': self.app_instance.royal_chest_ping_type_combo.currentText() if hasattr(self.app_instance, 'royal_chest_ping_type_combo') else self.royal_chest_ping_type,
                     'gum_rift_ping_id': self.app_instance.gum_rift_ping_entry.text().strip() if hasattr(self.app_instance, 'gum_rift_ping_entry') else self.gum_rift_ping_id,
                     'gum_rift_ping_type': self.app_instance.gum_rift_ping_type_combo.currentText() if hasattr(self.app_instance, 'gum_rift_ping_type_combo') else self.gum_rift_ping_type,
+                    'dice_chest_ping_id': self.app_instance.dice_chest_ping_entry.text().strip() if hasattr(self.app_instance, 'dice_chest_ping_entry') else self.dice_chest_ping_id,
+                    'dice_chest_ping_type': self.app_instance.dice_chest_ping_type_combo.currentText() if hasattr(self.app_instance, 'dice_chest_ping_type_combo') else self.dice_chest_ping_type,
                     'launcher_choice': self.app_instance.launcher_combo.currentText() if hasattr(self.app_instance, 'launcher_combo') else self.launcher_choice,
                     'server_mode': self.app_instance.server_mode_combo.currentText() if hasattr(self.app_instance, 'server_mode_combo') else self.server_mode,
                     'collection_enabled': self.app_instance.collection_enabled_checkbox.isChecked() if hasattr(self.app_instance, 'collection_enabled_checkbox') else self.collection_enabled,
@@ -190,6 +196,8 @@ class Config:
                     'royal_chest_ping_type': self.royal_chest_ping_type,
                     'gum_rift_ping_id': self.gum_rift_ping_id,
                     'gum_rift_ping_type': self.gum_rift_ping_type,
+                    'dice_chest_ping_id': self.dice_chest_ping_id,
+                    'dice_chest_ping_type': self.dice_chest_ping_type,
                     'launcher_choice': self.launcher_choice,
                     'server_mode': self.server_mode,
                     'collection_enabled': self.collection_enabled,
@@ -237,6 +245,12 @@ class Config:
             index = self.app_instance.gum_rift_ping_type_combo.findText(self.gum_rift_ping_type)
             if index >= 0:
                 self.app_instance.gum_rift_ping_type_combo.setCurrentIndex(index)
+        if hasattr(self.app_instance, 'dice_chest_ping_entry'):
+            self.app_instance.dice_chest_ping_entry.setText(self.dice_chest_ping_id)
+        if hasattr(self.app_instance, 'dice_chest_ping_type_combo'):
+            index = self.app_instance.dice_chest_ping_type_combo.findText(self.dice_chest_ping_type)
+            if index >= 0:
+                self.app_instance.dice_chest_ping_type_combo.setCurrentIndex(index)
         if hasattr(self.app_instance, 'launcher_combo'):
             index = self.app_instance.launcher_combo.findText(self.launcher_choice)
             if index >= 0:
