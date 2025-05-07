@@ -2,6 +2,8 @@ import time
 import pynput
 import json
 import os
+import sys
+import shutil
 from pynput import keyboard as pynput_keyboard
 
 # Check if AutoIt is available
@@ -24,7 +26,21 @@ class CollectionManager:
         self.claw_claim_coords = None
         self.claw_start_coords = None
         self.collection_worker = None
-        self.paths_dir = "Paths"
+        
+        # Get the app data directory for RiftScope
+        self.app_data_dir = os.path.join(os.getenv('APPDATA', ''), "RiftScope")
+        
+        # Define paths directory in appdata
+        self.paths_dir = os.path.join(self.app_data_dir, "Paths")
+        
+        # Bundled paths directory (for when running from executable)
+        if getattr(sys, 'frozen', False):
+            # If running as bundled executable
+            self.bundled_paths_dir = os.path.join(sys._MEIPASS, "Paths")
+        else:
+            # If running from source
+            self.bundled_paths_dir = "Paths"
+        
         self.available_paths = {}
         self.current_path = None
         self.load_available_paths()
@@ -57,22 +73,33 @@ class CollectionManager:
     def load_available_paths(self):
         """Load all available paths from the Paths directory"""
         self.available_paths = {}
+        
+        # Ensure app data directory exists
+        os.makedirs(self.app_data_dir, exist_ok=True)
+        
+        # If paths directory doesn't exist in appdata, create it and copy bundled paths
         if not os.path.exists(self.paths_dir):
-            os.makedirs(self.paths_dir)
+            os.makedirs(self.paths_dir, exist_ok=True)
             print(f"Created paths directory: {self.paths_dir}")
-            return
             
-        for filename in os.listdir(self.paths_dir):
-            if filename.endswith('.json'):
-                path_id = os.path.splitext(filename)[0]
-                file_path = os.path.join(self.paths_dir, filename)
-                try:
-                    with open(file_path, 'r') as f:
-                        path_data = json.load(f)
-                        self.available_paths[path_id] = path_data
-                        print(f"Loaded path: {path_data.get('name', path_id)}")
-                except Exception as e:
-                    print(f"Error loading path {filename}: {e}")
+            # Copy bundled paths to appdata if they exist
+            if os.path.exists(self.bundled_paths_dir):
+                print(f"Copying bundled paths from {self.bundled_paths_dir} to {self.paths_dir}")
+                self._copy_bundled_paths()
+        
+        # Load paths from appdata directory
+        if os.path.exists(self.paths_dir):
+            for filename in os.listdir(self.paths_dir):
+                if filename.endswith('.json'):
+                    path_id = os.path.splitext(filename)[0]
+                    file_path = os.path.join(self.paths_dir, filename)
+                    try:
+                        with open(file_path, 'r') as f:
+                            path_data = json.load(f)
+                            self.available_paths[path_id] = path_data
+                            print(f"Loaded path: {path_data.get('name', path_id)}")
+                    except Exception as e:
+                        print(f"Error loading path {filename}: {e}")
         
         # Default to gem_path if it exists
         if 'gem_path' in self.available_paths:
@@ -81,6 +108,48 @@ class CollectionManager:
         # Update path selector in UI if available
         if hasattr(self.app, 'update_path_selector'):
             self.app.update_path_selector()
+    
+    def _copy_bundled_paths(self):
+        """Copy bundled path files to the appdata paths directory"""
+        try:
+            if not os.path.exists(self.bundled_paths_dir):
+                print(f"Bundled paths directory not found: {self.bundled_paths_dir}")
+                return
+                
+            for filename in os.listdir(self.bundled_paths_dir):
+                if filename.endswith('.json'):
+                    src_path = os.path.join(self.bundled_paths_dir, filename)
+                    dst_path = os.path.join(self.paths_dir, filename)
+                    
+                    # Only copy if the file doesn't already exist
+                    if not os.path.exists(dst_path):
+                        shutil.copy2(src_path, dst_path)
+                        print(f"Copied path file: {filename}")
+        except Exception as e:
+            print(f"Error copying bundled paths: {e}")
+        
+    def save_path_file(self, path_id, path_data):
+        """Save a path file to the appdata paths directory"""
+        try:
+            # Ensure the paths directory exists
+            os.makedirs(self.paths_dir, exist_ok=True)
+            
+            # Save the path file
+            file_path = os.path.join(self.paths_dir, f"{path_id}.json")
+            with open(file_path, 'w') as f:
+                json.dump(path_data, f, indent=4)
+            
+            # Update available paths
+            self.available_paths[path_id] = path_data
+            
+            # Update UI if available
+            if hasattr(self.app, 'update_path_selector'):
+                self.app.update_path_selector()
+                
+            return True
+        except Exception as e:
+            print(f"Error saving path file {path_id}: {e}")
+            return False
         
     def set_current_path(self, path_id):
         """Set the current path to use"""
