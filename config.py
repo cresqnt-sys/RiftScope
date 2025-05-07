@@ -99,13 +99,18 @@ class Config:
         self.dice_chest_ping_type = 'User'
         self.launcher_choice = 'Auto'
         self.server_mode = 'Private Server'
-        self.collection_enabled = False
+        self.collection_path_enabled = False
         self.teleport_coords = None
+        self.claw_skip_coords = None
+        self.claw_claim_coords = None
+        self.claw_start_coords = None
+        self.current_path = 'gem_path'  # Default path
         self.hatch_username = ''
         self.hatch_secret_ping_enabled = False
         self.hatch_secret_ping_user_id = ''
         self.hatch_detection_enabled = True
         self.tutorial_shown = False
+        self.auto_start = False # Initialize auto_start
         
         # Determine config file path
         app_data_dir = os.getenv('APPDATA')
@@ -134,8 +139,14 @@ class Config:
                     self.launcher_choice = config.get('launcher_choice', 'Auto')
                     self.server_mode = config.get('server_mode', 'Private Server')
 
-                    self.collection_enabled = config.get('collection_enabled', False)
+                    self.collection_path_enabled = config.get('collection_path_enabled', DEFAULT_CONFIG.get('collection_path_enabled', False))
                     loaded_coords = config.get('teleport_coords', None)
+                    self.current_path = config.get('current_path', 'gem_path')
+
+                    # Load claw machine coordinates
+                    self.claw_skip_coords = config.get('claw_skip_coords', None)
+                    self.claw_claim_coords = config.get('claw_claim_coords', None)
+                    self.claw_start_coords = config.get('claw_start_coords', None)
 
                     if isinstance(loaded_coords, (list, tuple)):
                         if len(loaded_coords) == 2:
@@ -153,6 +164,7 @@ class Config:
                     self.hatch_secret_ping_user_id = config.get('hatch_secret_ping_user_id', '')
                     self.hatch_detection_enabled = config.get('hatch_detection_enabled', True) 
                     self.tutorial_shown = config.get('tutorial_shown', False)
+                    self.auto_start = config.get('auto_start', DEFAULT_CONFIG.get('auto_start', False))
                     
                 return True
         except Exception as e:
@@ -168,6 +180,11 @@ class Config:
             
             # If we have an app instance, get values from UI components
             if self.app_instance:
+                # Get the current path from the collection manager if available
+                current_path = self.current_path
+                if hasattr(self.app_instance, 'collection_manager') and hasattr(self.app_instance.collection_manager, 'current_path'):
+                    current_path = self.app_instance.collection_manager.current_path
+                
                 config = {
                     'webhook_url': self.app_instance.webhook_entry.text().strip() if hasattr(self.app_instance, 'webhook_entry') else self.webhook_url,
                     'ps_link': self.app_instance.pslink_entry.text().strip() if hasattr(self.app_instance, 'pslink_entry') else self.ps_link,
@@ -179,13 +196,18 @@ class Config:
                     'dice_chest_ping_type': self.app_instance.dice_chest_ping_type_combo.currentText() if hasattr(self.app_instance, 'dice_chest_ping_type_combo') else self.dice_chest_ping_type,
                     'launcher_choice': self.app_instance.launcher_combo.currentText() if hasattr(self.app_instance, 'launcher_combo') else self.launcher_choice,
                     'server_mode': self.app_instance.server_mode_combo.currentText() if hasattr(self.app_instance, 'server_mode_combo') else self.server_mode,
-                    'collection_enabled': self.app_instance.collection_enabled_checkbox.isChecked() if hasattr(self.app_instance, 'collection_enabled_checkbox') else self.collection_enabled,
+                    'collection_path_enabled': self.app_instance.collection_enabled_checkbox.isChecked() if hasattr(self.app_instance, 'collection_enabled_checkbox') else self.collection_path_enabled,
                     'teleport_coords': self.teleport_coords,
+                    'claw_skip_coords': self.claw_skip_coords,
+                    'claw_claim_coords': self.claw_claim_coords,
+                    'claw_start_coords': self.claw_start_coords,
+                    'current_path': current_path,
                     'hatch_username': self.app_instance.hatch_username_entry.text().strip() if hasattr(self.app_instance, 'hatch_username_entry') else self.hatch_username,
                     'hatch_secret_ping_enabled': self.app_instance.hatch_secret_ping_checkbox.isChecked() if hasattr(self.app_instance, 'hatch_secret_ping_checkbox') else self.hatch_secret_ping_enabled,
                     'hatch_secret_ping_user_id': self.app_instance.hatch_userid_entry.text().strip() if hasattr(self.app_instance, 'hatch_userid_entry') else self.hatch_secret_ping_user_id,
                     'hatch_detection_enabled': self.app_instance.hatch_detection_enabled_checkbox.isChecked() if hasattr(self.app_instance, 'hatch_detection_enabled_checkbox') else self.hatch_detection_enabled,
-                    'tutorial_shown': self.tutorial_shown
+                    'tutorial_shown': self.tutorial_shown,
+                    'auto_start': self.app_instance.automation_enabled_checkbox.isChecked() if hasattr(self.app_instance, 'automation_enabled_checkbox') else self.auto_start
                 }
             else:
                 # No app instance, save current config values
@@ -200,13 +222,18 @@ class Config:
                     'dice_chest_ping_type': self.dice_chest_ping_type,
                     'launcher_choice': self.launcher_choice,
                     'server_mode': self.server_mode,
-                    'collection_enabled': self.collection_enabled,
+                    'collection_path_enabled': self.collection_path_enabled,
                     'teleport_coords': self.teleport_coords,
+                    'claw_skip_coords': self.claw_skip_coords,
+                    'claw_claim_coords': self.claw_claim_coords,
+                    'claw_start_coords': self.claw_start_coords,
+                    'current_path': self.current_path,
                     'hatch_username': self.hatch_username,
                     'hatch_secret_ping_enabled': self.hatch_secret_ping_enabled,
                     'hatch_secret_ping_user_id': self.hatch_secret_ping_user_id,
                     'hatch_detection_enabled': self.hatch_detection_enabled,
-                    'tutorial_shown': self.tutorial_shown
+                    'tutorial_shown': self.tutorial_shown,
+                    'auto_start': self.auto_start
                 }
                 
             with open(self.config_file, 'w') as f:
@@ -262,7 +289,7 @@ class Config:
             if index >= 0:
                 self.app_instance.server_mode_combo.setCurrentIndex(index)
         if hasattr(self.app_instance, 'collection_enabled_checkbox'):
-            self.app_instance.collection_enabled_checkbox.setChecked(self.collection_enabled)
+            self.app_instance.collection_enabled_checkbox.setChecked(self.collection_path_enabled)
         if hasattr(self.app_instance, 'hatch_username_entry'):
             self.app_instance.hatch_username_entry.setText(self.hatch_username)
         if hasattr(self.app_instance, 'hatch_secret_ping_checkbox'):
@@ -271,3 +298,5 @@ class Config:
             self.app_instance.hatch_userid_entry.setText(self.hatch_secret_ping_user_id)
         if hasattr(self.app_instance, 'hatch_detection_enabled_checkbox'):
             self.app_instance.hatch_detection_enabled_checkbox.setChecked(self.hatch_detection_enabled) 
+        if hasattr(self.app_instance, 'automation_enabled_checkbox'): # Apply auto_start to UI
+            self.app_instance.automation_enabled_checkbox.setChecked(self.auto_start) 

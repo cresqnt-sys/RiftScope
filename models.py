@@ -37,11 +37,12 @@ class Worker(QThread):
 class CalibrationOverlay(QWidget):
     point_selected = pyqtSignal(QPoint) 
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, calibration_target_text="Click on the target location."):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.SplashScreen)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowState(Qt.WindowState.WindowFullScreen)
+        self.target_text = calibration_target_text
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -52,8 +53,13 @@ class CalibrationOverlay(QWidget):
         font = QFont("Segoe UI", 16)
         font.setBold(True)
         painter.setFont(font)
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
-                         "Click on the exact location of the Teleport Button.\nPress ESC to cancel.")
+        if "\\n" in self.target_text:
+            lines = self.target_text.split("\\n")
+            text_to_draw = "\\n".join(lines) + "\\nPress ESC to cancel."
+        else:
+            text_to_draw = self.target_text + "\\nPress ESC to cancel."
+            
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, text_to_draw)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton: 

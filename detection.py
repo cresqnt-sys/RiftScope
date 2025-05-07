@@ -14,8 +14,15 @@ class RiftDetector:
         self.last_line_time = time.time()
         self.last_timestamp = None
         self.lock_log_file = False
-        self.last_notification_time = {} # Store last notification time per event type
-        
+        # self.last_notification_time = {} # Store last notification time per event type
+
+        # Variables to track last processed line within the current batch for each event type
+        self.current_batch_last_royal_chest_line = None
+        self.current_batch_last_gum_rift_line = None
+        self.current_batch_last_silly_egg_line = None
+        self.current_batch_last_dice_chest_line = None
+        self.current_batch_last_hatch_trigger_line = None
+
         # Server tracking
         self.current_job_id = None
         self.current_place_id = None
@@ -28,24 +35,27 @@ class RiftDetector:
         
         # Pet lists for detection
         self.secret_pets = {
-            "Giant Chocolate Chicken", "Easter Basket", "MAN FACE GOD", "King Doggy",
-            "The Overlord", "Avernus", "Dementor", "Godly Gem", "Royal Trophy", "Silly Doggy :)"
+            "Avernus", "Dementor", "Easter Basket", "Giant Chocolate Chicken",
+            "Godly Gem", "King Doggy", "Luminosity", "MAN FACE GOD", "Mech Robot",
+            "Royal Trophy", "Silly Doggy :)", "The Overlord"
         }
         
         self.legendary_pets = {
-            "NULLVoid", "Cardinal Bunny", "Rainbow Marshmellow", "Rainbow Shock",
-            "Ethereal Bunny", "Hexarium", "Seraph", "Sweet Treat", "Abyssal Dragon",
-            "Beta TV", "Crescent Empress", "Dark Phoenix", "Dark Serpent", "Demonic Dogcat",
-            "Demonic Hydra", "Discord Imp", "Dowodle", "Dualcorn", "Easter Fluffle",
-            "Easter Serpent", "Electra", "Emerald Golem", "Evil Shock", "Flying Gem",
-            "Flying Pig", "Green Hydra", "Hacker Prism", "Holy Egg", "Holy Shock",
-            "Inferno Cube", "Inferno Dragon", "Infernus", "King Soul", "Kitsune",
-            "Lunar Deity", "Lunar Serpent", "Manarium", "Midas", "Moonburst",
-            "Neon Elemental", "Ophanim", "Patronus", "Rainbow Blitz", "Seraphic Bunny",
-            "Sigma Serpent", "Solar Deity", "Sunburst", "Trio Cube", "Umbra",
-            "Unicorn", "Virus", "Chocolate Bunny", "Diamond Hexarium", "Diamond Serpent", 
-            "DOOF", "Electra Hydra", "Elite Challenger", "Elite Soul", "Enraged Phoenix", 
-            "King Pufferfish", "Overseer", "Parasite", "ROUND", "Starlight"
+            "Abyssal Dragon", "Beta TV", "Bionic Shard", "Cardinal Bunny", "Chocolate Bunny",
+            "Crescent Empress", "Crystal Unicorn", "Cyborg Phoenix", "Dark Phoenix", "Dark Serpent",
+            "Dawn", "Demonic Dogcat", "Demonic Hydra", "Diamond Hexarium", "Diamond Serpent",
+            "Dice Split", "Discord Imp", "DOOF", "Dowodle", "Dragon Plushie", "Dualcorn",
+            "Dusk", "Easter Fluffle", "Easter Serpent", "Electra", "Electra Hydra",
+            "Elite Challenger", "Elite Soul", "Emerald Golem", "Enraged Phoenix", "Ethereal Bunny",
+            "Evil Shock", "Flying Gem", "Flying Pig", "Game Master", "Green Hydra",
+            "Hacker Prism", "Hexarium", "Holy Egg", "Holy Shock", "Inferno Cube",
+            "Inferno Dragon", "Infernus", "Jackpot", "King Pufferfish", "King Soul",
+            "Kitsune", "Lunar Deity", "Lunar Serpent", "Magmas", "Manarium", "Midas",
+            "Moon Deer", "Moonburst", "Moonlight", "Nebula", "Neon Elemental", "NULLVoid",
+            "Ophanim", "Overseer", "Parasite", "Patronus", "Rainbow Blitz",
+            "Rainbow Marshmellow", "Rainbow Shock", "ROUND", "Seraph", "Seraphic Bunny", "Sigma Serpent",
+            "Solar Deity", "Starlight", "Sunburst", "Sweet Treat", "Trio Cube", "Umbra",
+            "Unicorn", "Virus"
         }
         
     def get_log_dir(self):
@@ -238,6 +248,13 @@ class RiftDetector:
                 lines = read_last_n_lines(self.current_log, n=30)
                 new_line_found = False
                 
+                # Reset batch-specific last line trackers
+                self.current_batch_last_royal_chest_line = None
+                self.current_batch_last_gum_rift_line = None
+                self.current_batch_last_silly_egg_line = None
+                self.current_batch_last_dice_chest_line = None
+                self.current_batch_last_hatch_trigger_line = None
+
                 # Check again if app is still running after file read
                 if not self.app or not self.app.running:
                     break
@@ -291,8 +308,6 @@ class RiftDetector:
                             pass 
 
                     timestamp = extract_timestamp(line)
-                    current_real_time = time.time() # Use current time for cooldown checks
-                    cooldown_seconds = 2.0 # Cooldown period in seconds
                     
                     # Regex pattern for hatch detection
                     hatch_pattern = re.compile(r'<b><font color="#[0-9a-fA-F]{6}">([^<]+)</font> just hatched a <font color="([^"]+)">([^<]+?)(?: \(([^)]+%)\))?</font></b>')
@@ -305,9 +320,8 @@ class RiftDetector:
                     
                     # Royal chest detection
                     if "🔮" in line:
-                        # Check cooldown before processing
-                        last_sent = self.last_notification_time.get('royal_chest', 0)
-                        if current_real_time - last_sent >= cooldown_seconds:
+                        # Check if this line has already triggered a royal chest event in this batch
+                        if line != self.current_batch_last_royal_chest_line:
                             if hasattr(self, 'monitor_thread') and self.monitor_thread:
                                 self.monitor_thread.update_status_signal.emit("✨ Royal chest detected!")
                                 ping_id = self.app.royal_chest_ping_entry.text().strip()
@@ -320,16 +334,15 @@ class RiftDetector:
                                     0x9b59b6,
                                     ping_mention if ping_id else None
                                 )
-                                self.last_notification_time['royal_chest'] = current_real_time # Update last sent time
-                        # else: # Optional: Log cooldown skip
+                                self.current_batch_last_royal_chest_line = line
+                        # else: # Optional: Log if skipped due to being a duplicate in the batch
                         #    if hasattr(self, 'monitor_thread') and self.monitor_thread:
-                        #        self.monitor_thread.update_status_signal.emit("Royal chest detected (cooldown). Skipping ping.")
+                        #        self.monitor_thread.update_status_signal.emit("Royal chest (duplicate in batch). Skipping ping.")
 
                     # Gum rift detection
                     elif "Bring us your gum, Earthlings!" in line:
-                        # Check cooldown before processing
-                        last_sent = self.last_notification_time.get('gum_rift', 0)
-                        if current_real_time - last_sent >= cooldown_seconds:
+                        # Check if this line has already triggered a gum rift event in this batch
+                        if line != self.current_batch_last_gum_rift_line:
                             if hasattr(self, 'monitor_thread') and self.monitor_thread:
                                 self.monitor_thread.update_status_signal.emit("🫧 Gum Rift detected!")
                                 ping_id = self.app.gum_rift_ping_entry.text().strip()
@@ -342,16 +355,15 @@ class RiftDetector:
                                     0xFF69B4,
                                     ping_mention if ping_id else None
                                 )
-                                self.last_notification_time['gum_rift'] = current_real_time # Update last sent time
-                        # else: # Optional: Log cooldown skip
+                                self.current_batch_last_gum_rift_line = line
+                        # else: # Optional: Log if skipped
                         #    if hasattr(self, 'monitor_thread') and self.monitor_thread:
-                        #        self.monitor_thread.update_status_signal.emit("Gum rift detected (cooldown). Skipping ping.")
+                        #        self.monitor_thread.update_status_signal.emit("Gum rift (duplicate in batch). Skipping ping.")
 
                     # Silly egg detection
                     elif "we're so silly and fun" in line:
-                        # Check cooldown before processing
-                        last_sent = self.last_notification_time.get('silly_egg', 0)
-                        if current_real_time - last_sent >= cooldown_seconds:
+                        # Check if this line has already triggered a silly egg event in this batch
+                        if line != self.current_batch_last_silly_egg_line:
                             if hasattr(self, 'monitor_thread') and self.monitor_thread:
                                 self.monitor_thread.update_status_signal.emit("😂 Silly Egg detected!")
                                 self.monitor_thread.webhook_signal.emit(
@@ -361,16 +373,15 @@ class RiftDetector:
                                     0xf1c40f, 
                                     "@everyone" 
                                 )
-                                self.last_notification_time['silly_egg'] = current_real_time # Update last sent time
-                        # else: # Optional: Log cooldown skip
+                                self.current_batch_last_silly_egg_line = line
+                        # else: # Optional: Log if skipped
                         #    if hasattr(self, 'monitor_thread') and self.monitor_thread:
-                        #        self.monitor_thread.update_status_signal.emit("Silly egg detected (cooldown). Skipping ping.")
+                        #        self.monitor_thread.update_status_signal.emit("Silly egg (duplicate in batch). Skipping ping.")
 
                     # Dice Chest detection
                     elif "Feeling lucky..?" in line:
-                        # Check cooldown before processing
-                        last_sent = self.last_notification_time.get('dice_chest', 0)
-                        if current_real_time - last_sent >= cooldown_seconds:
+                        # Check if this line has already triggered a dice chest event in this batch
+                        if line != self.current_batch_last_dice_chest_line:
                             if hasattr(self, 'monitor_thread') and self.monitor_thread:
                                 self.monitor_thread.update_status_signal.emit("🎲 Dice Chest detected!")
                                 ping_id = self.app.dice_chest_ping_entry.text().strip()
@@ -383,10 +394,10 @@ class RiftDetector:
                                     0x3498db,
                                     ping_mention if ping_id else None
                                 )
-                                self.last_notification_time['dice_chest'] = current_real_time # Update last sent time
-                        # else: # Optional: Log cooldown skip
+                                self.current_batch_last_dice_chest_line = line
+                        # else: # Optional: Log if skipped
                         #    if hasattr(self, 'monitor_thread') and self.monitor_thread:
-                        #        self.monitor_thread.update_status_signal.emit("Dice chest detected (cooldown). Skipping ping.")
+                        #        self.monitor_thread.update_status_signal.emit("Dice chest (duplicate in batch). Skipping ping.")
 
                     # Hatch detection
                     elif (self.app and hasattr(self.app, 'hatch_detection_enabled_checkbox') and 
@@ -395,7 +406,7 @@ class RiftDetector:
                         match = hatch_pattern.search(line)
                         if match:
                             # Pass current_real_time for cooldown check within the function
-                            self.process_hatch_match(match, current_time, line_timestamp, current_real_time)
+                            self.process_hatch_match(match, current_time, line_timestamp, line)
                             
                 if new_line_found:
                     self.last_line_time = time.time() 
@@ -638,7 +649,7 @@ class RiftDetector:
                 
         return ""
     
-    def process_hatch_match(self, match, current_time, line_timestamp=None, current_real_time=None):
+    def process_hatch_match(self, match, current_time, line_timestamp=None, triggering_line=None):
         """Process a regex match for hatched pet"""
         print("[DEBUG] Regex match successful!") 
         hatched_username = match.group(1)
@@ -676,14 +687,10 @@ class RiftDetector:
             if target_username and hatched_username.lower() == target_username.lower():
                 print(f"[DEBUG] Username '{hatched_username}' matches target '{target_username}'. Proceeding...")
 
-                # Check cooldown before processing hatch notification
-                if current_real_time is None: # Fallback if not passed
-                     current_real_time = time.time()
-                cooldown_seconds = 2.0
-                last_sent = self.last_notification_time.get('hatch', 0)
-
-                if current_real_time - last_sent >= cooldown_seconds:
-                    print("[DEBUG] Cooldown passed for hatch event.")
+                # Check if this triggering_line has already processed a hatch in this batch
+                if triggering_line != self.current_batch_last_hatch_trigger_line:
+                    # print("[DEBUG] Cooldown passed for hatch event.") # Old message
+                    print("[DEBUG] New hatch event line detected. Processing...")
                     if hasattr(self, 'monitor_thread') and self.monitor_thread:
                         print("[DEBUG] Monitor thread exists. Sending status/webhook.")
                         pet_type = "Secret" if is_secret else "Legendary"
@@ -710,14 +717,15 @@ class RiftDetector:
                             embed_color,
                             ping_content
                         )
-                        # Update last sent time only after successfully sending
-                        self.last_notification_time['hatch'] = current_real_time 
+                        # Update last processed hatch line for this batch
+                        self.current_batch_last_hatch_trigger_line = triggering_line
                 else:
-                     print("[DEBUG] Hatch event skipped due to cooldown.")
+                     # print("[DEBUG] Hatch event skipped due to cooldown.") # Old message
+                     print("[DEBUG] Hatch event for this line already processed in current batch. Skipping duplicate notification.")
                      # Optional: Log cooldown skip
                      if hasattr(self, 'monitor_thread') and self.monitor_thread:
                          pet_type = "Secret" if is_secret else "Legendary"
-                         self.monitor_thread.update_status_signal.emit(f"{pet_type} hatch detected for {hatched_username} (cooldown). Skipping ping.")
+                         self.monitor_thread.update_status_signal.emit(f"{pet_type} hatch by {hatched_username} for {pet_name} already processed in this batch. Skipping duplicate ping.")
 
             else:
                 print(f"[DEBUG] Username '{hatched_username}' does not match target '{target_username}' or target is empty. Skipping notification.")

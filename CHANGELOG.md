@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (starting from 1.0.0-Alpha).
 
+## [1.3.0-Stable] - 2025-05-07
+
+### Added
+- **Collection Path Management**:
+    - Organized collection paths into a "Paths" folder for better structure.
+    - Updated code to read paths from JSON files in the Paths folder.
+- **Claw Machine**:
+    - Added calibration buttons for "Claw Machine Skip", "Claw Machine Claim", and "Claw Machine Start".
+    - Implemented automated sequence for claw machine: start → execute path → claim → jump → skip.
+    - Added specific timing controls between actions.
+- **Updated Pet Lists**:
+    - Added additional pets to Secret and Legendary detection lists.
+
+### Changed
+- **Event Notification System**:
+    - Replaced time-based cooldown with content-based detection to prevent double-sending notifications.
+    - Implemented line-content tracking to ensure each log line only triggers a notification once per batch.
+- **Configuration Handling**:
+    - Fixed issue with "Enable Automation" toggle not saving its state.
+    - Ensured configuration is properly saved when application closes.
+
+### Fixed
+- Fixed indentation errors in notification system code.
+- Resolved configuration key inconsistencies between UI elements and config file.
+
 ## [1.2.5-Beta] - 2025-04-29
 
 ### Added

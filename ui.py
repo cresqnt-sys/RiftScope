@@ -75,7 +75,7 @@ QPushButton:disabled {{
 class RiftScopeApp(QMainWindow):
     """Main application window for RiftScope"""
     
-    APP_VERSION = "1.2.7-Stable"
+    APP_VERSION = "1.3.0-Stable"
     REPO_URL = "cresqnt-sys/RiftScope"
     
     update_prompt_signal = pyqtSignal(str, str)
@@ -110,6 +110,9 @@ class RiftScopeApp(QMainWindow):
         self.hotkey_listener = None
         self.monitor_thread = None 
         self.teleport_coords = None  # Initialize teleport_coords attribute
+        self.claw_skip_coords = None # New
+        self.claw_claim_coords = None # New
+        self.claw_start_coords = None # New
         self.collection_running = False  # Initialize collection_running attribute
         
         # Initialize config
@@ -120,6 +123,16 @@ class RiftScopeApp(QMainWindow):
         if hasattr(self.config, 'teleport_coords') and self.config.teleport_coords:
             self.teleport_coords = self.config.teleport_coords
             print(f"Loaded teleport coords from config: {self.teleport_coords}")
+        # Load other coords from config
+        if hasattr(self.config, 'claw_skip_coords') and self.config.claw_skip_coords:
+            self.claw_skip_coords = self.config.claw_skip_coords
+            print(f"Loaded claw_skip_coords from config: {self.claw_skip_coords}")
+        if hasattr(self.config, 'claw_claim_coords') and self.config.claw_claim_coords:
+            self.claw_claim_coords = self.config.claw_claim_coords
+            print(f"Loaded claw_claim_coords from config: {self.claw_claim_coords}")
+        if hasattr(self.config, 'claw_start_coords') and self.config.claw_start_coords:
+            self.claw_start_coords = self.config.claw_start_coords
+            print(f"Loaded claw_start_coords from config: {self.claw_start_coords}")
         
         # Initialize managers
         self.detector = RiftDetector(self)
@@ -134,6 +147,9 @@ class RiftScopeApp(QMainWindow):
         
         # Apply loaded config to UI
         self.config.apply_to_ui()
+        
+        # Update calibration button text and path selector
+        self.collection_manager.update_all_calibration_buttons_text()
         
         # Application is now fully initialized
         self.initializing = False
@@ -181,8 +197,11 @@ class RiftScopeApp(QMainWindow):
         # Add the Pings tab
         self._build_pings_tab()
         
-        # Add the Collection tab
-        self._build_collection_tab()
+        # Add the Automation tab (formerly Collection)
+        self._build_automation_tab()
+        
+        # Add the Calibration tab
+        self._build_calibration_tab()
         
         # Add the Hatch tab
         self._build_hatch_tab()
@@ -389,48 +408,153 @@ class RiftScopeApp(QMainWindow):
         pings_layout.addLayout(pings_grid_layout) 
         pings_layout.addStretch()
         
-    def _build_collection_tab(self):
-        """Build the Collection tab UI"""
-        self.collection_tab = QWidget()
-        collection_layout = QVBoxLayout(self.collection_tab)
-        collection_layout.setContentsMargins(15, 20, 15, 15)
-        collection_layout.setSpacing(10)
-        self.tab_widget.addTab(self.collection_tab, "Collection")
+    def _build_automation_tab(self):
+        """Build the Automation tab UI"""
+        self.automation_tab = QWidget()
+        automation_layout = QVBoxLayout(self.automation_tab)
+        automation_layout.setContentsMargins(15, 20, 15, 15)
+        automation_layout.setSpacing(10)
+        self.tab_widget.addTab(self.automation_tab, "Automation")
 
-        collection_title_label = QLabel("Collection Path")
-        collection_title_font = QFont("Segoe UI", 12)
-        collection_title_font.setBold(True)
-        collection_title_label.setFont(collection_title_font)
-        collection_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        collection_layout.addWidget(collection_title_label)
+        automation_title_label = QLabel("Automation")
+        automation_title_font = QFont("Segoe UI", 12)
+        automation_title_font.setBold(True)
+        automation_title_label.setFont(automation_title_font)
+        automation_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        automation_layout.addWidget(automation_title_label)
 
-        # Collection path settings
-        self.collection_enabled_checkbox = QCheckBox("Enable Collection Path")
-        collection_layout.addWidget(self.collection_enabled_checkbox)
+        # Automation settings
+        self.automation_enabled_checkbox = QCheckBox("Enable Automation")
+        automation_layout.addWidget(self.automation_enabled_checkbox)
+
+        # Automation type selector
+        automation_type_selector_label = QLabel("Select Automation Type:")
+        automation_layout.addWidget(automation_type_selector_label)
+        
+        self.automation_type_selector_combo = QComboBox()
+        automation_layout.addWidget(self.automation_type_selector_combo)
+        
+        # Populate path selector dropdown
+        self.update_automation_type_selector()
+
+        # Collection tutorial link (keeping link, maybe update text later if a general automation tutorial exists)
+        automation_tutorial_label = QLabel(
+            'Automation Tutorial (General Pathing): <a href="https://www.youtube.com/watch?v=YOQQR3n8VE4">Watch Video</a>'
+        )
+        automation_tutorial_label.setTextFormat(Qt.TextFormat.RichText)
+        automation_tutorial_label.setOpenExternalLinks(True)
+        automation_tutorial_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        automation_layout.addWidget(automation_tutorial_label)
+
+        automation_layout.addStretch()
+        
+    def _build_calibration_tab(self):
+        """Build the Calibration tab UI"""
+        self.calibration_tab = QWidget()
+        # Use a main QVBoxLayout to structure sections
+        main_calibration_layout = QVBoxLayout(self.calibration_tab)
+        main_calibration_layout.setContentsMargins(15, 15, 15, 15) # Slightly reduced top margin
+        main_calibration_layout.setSpacing(10)
+        self.tab_widget.addTab(self.calibration_tab, "Calibration")
+
+        # --- Teleport Calibration Section ---
+        teleport_group_box = QFrame() # Using QFrame for visual grouping if needed later, or just use layout directly
+        teleport_layout = QVBoxLayout(teleport_group_box)
+        teleport_layout.setContentsMargins(0,0,0,0)
+        teleport_layout.setSpacing(5) # Reduced spacing within this group
+
+        calibration_title_label = QLabel("Teleport Button Calibration")
+        calibration_title_font = QFont("Segoe UI", 11) # Slightly smaller font for section titles
+        calibration_title_font.setBold(True)
+        calibration_title_label.setFont(calibration_title_font)
+        calibration_title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        teleport_layout.addWidget(calibration_title_label)
+        
+        calibration_explanation = QLabel(
+            "Calibrate the teleport button position for the collection path."
+        )
+        calibration_explanation.setWordWrap(True)
+        calibration_explanation.setStyleSheet("font-size: 9pt;") # Smaller explanation text
+        teleport_layout.addWidget(calibration_explanation)
 
         self.calibrate_button = QPushButton() 
         self.calibrate_button.setStyleSheet(button_stylesheet.format(
              bg_color="#43b581", fg_color="white", hover_bg_color="#3ca374", pressed_bg_color="#359066"
         ))
         self.calibrate_button.clicked.connect(self.collection_manager.start_calibration) 
-        collection_layout.addWidget(self.calibrate_button)
+        teleport_layout.addWidget(self.calibrate_button)
 
         self.calibrate_coords_label = QLabel("")
         self.calibrate_coords_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.calibrate_coords_label.setStyleSheet("font-size: 8pt; color: #aaa;")
-        collection_layout.addWidget(self.calibrate_coords_label)
-        self.collection_manager._update_calibrate_button_text() 
+        teleport_layout.addWidget(self.calibrate_coords_label)
+        main_calibration_layout.addWidget(teleport_group_box)
+        
+        # --- Claw Machine Calibration Section ---
+        claw_group_box = QFrame()
+        claw_layout = QVBoxLayout(claw_group_box)
+        claw_layout.setContentsMargins(0,0,0,0)
+        claw_layout.setSpacing(8) # Spacing for the claw machine section
 
-        # Collection tutorial link
-        collection_tutorial_label = QLabel(
-            'Collection Tutorial: <a href="https://www.youtube.com/watch?v=YOQQR3n8VE4">Watch Video</a>'
+        claw_calibration_title_label = QLabel("Claw Machine Calibration")
+        claw_calibration_title_label.setFont(calibration_title_font) # Reuse font
+        claw_calibration_title_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        claw_layout.addWidget(claw_calibration_title_label)
+
+        claw_explanation = QLabel(
+            "Calibrate positions for Claw Machine interactions."
         )
-        collection_tutorial_label.setTextFormat(Qt.TextFormat.RichText)
-        collection_tutorial_label.setOpenExternalLinks(True)
-        collection_tutorial_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        collection_layout.addWidget(collection_tutorial_label)
+        claw_explanation.setWordWrap(True)
+        claw_explanation.setStyleSheet("font-size: 9pt;")
+        claw_layout.addWidget(claw_explanation)
 
-        collection_layout.addStretch()
+        # Use QGridLayout for buttons and labels in this section
+        claw_buttons_grid = QGridLayout()
+        claw_buttons_grid.setSpacing(5)
+
+        # Calibrate Claw Skip Button
+        self.calibrate_claw_skip_button = QPushButton()
+        self.calibrate_claw_skip_button.setStyleSheet(button_stylesheet.format(
+             bg_color="#5865F2", fg_color="white", hover_bg_color="#4752C4", pressed_bg_color="#3C45A5"
+        ))
+        self.calibrate_claw_skip_button.clicked.connect(self.collection_manager.start_claw_skip_calibration)
+        self.claw_skip_coords_label = QLabel("")
+        self.claw_skip_coords_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.claw_skip_coords_label.setStyleSheet("font-size: 8pt; color: #aaa;")
+        claw_buttons_grid.addWidget(self.calibrate_claw_skip_button, 0, 0)
+        claw_buttons_grid.addWidget(self.claw_skip_coords_label, 0, 1)
+
+        # Calibrate Claw Claim Button
+        self.calibrate_claw_claim_button = QPushButton()
+        self.calibrate_claw_claim_button.setStyleSheet(button_stylesheet.format(
+             bg_color="#5865F2", fg_color="white", hover_bg_color="#4752C4", pressed_bg_color="#3C45A5"
+        ))
+        self.calibrate_claw_claim_button.clicked.connect(self.collection_manager.start_claw_claim_calibration)
+        self.claw_claim_coords_label = QLabel("")
+        self.claw_claim_coords_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.claw_claim_coords_label.setStyleSheet("font-size: 8pt; color: #aaa;")
+        claw_buttons_grid.addWidget(self.calibrate_claw_claim_button, 1, 0)
+        claw_buttons_grid.addWidget(self.claw_claim_coords_label, 1, 1)
+
+        # Calibrate Claw Start Button
+        self.calibrate_claw_start_button = QPushButton()
+        self.calibrate_claw_start_button.setStyleSheet(button_stylesheet.format(
+             bg_color="#5865F2", fg_color="white", hover_bg_color="#4752C4", pressed_bg_color="#3C45A5"
+        ))
+        self.calibrate_claw_start_button.clicked.connect(self.collection_manager.start_claw_start_calibration)
+        self.claw_start_coords_label = QLabel("")
+        self.claw_start_coords_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.claw_start_coords_label.setStyleSheet("font-size: 8pt; color: #aaa;")
+        claw_buttons_grid.addWidget(self.calibrate_claw_start_button, 2, 0)
+        claw_buttons_grid.addWidget(self.claw_start_coords_label, 2, 1)
+        
+        claw_buttons_grid.setColumnStretch(0, 1) # Button takes available space
+        claw_buttons_grid.setColumnStretch(1, 1) # Label takes available space, or adjust as needed
+
+        claw_layout.addLayout(claw_buttons_grid)
+        main_calibration_layout.addWidget(claw_group_box)
+        
+        main_calibration_layout.addStretch()
         
     def _build_hatch_tab(self):
         """Build the Hatch tab UI"""
@@ -517,9 +641,24 @@ class RiftScopeApp(QMainWindow):
         formatted_log_message = f"[{timestamp}] {message}"
 
         if hasattr(self, 'log_console'):
-            self.log_console.append(formatted_log_message)
-            self.log_console.ensureCursorVisible() 
+            try:
+                # Attempt to append to the log console only if it's a valid widget
+                if self.log_console: # Basic check, RuntimeError will catch C++ deletion
+                    self.log_console.append(formatted_log_message)
+                    self.log_console.ensureCursorVisible() 
+            except RuntimeError as e:
+                # This error occurs if the C++ part of the widget has been deleted (e.g., during shutdown)
+                if "deleted" in str(e).lower():
+                    print(f"(UI Log Console unavailable: {e}) {formatted_log_message}")
+                else:
+                    # Re-raise if it's a different RuntimeError
+                    print(f"(UI Log Console unexpected RuntimeError: {e}) {formatted_log_message}")
+                    # Depending on desired behavior, you might re-raise e here
+            except Exception as e:
+                # Catch any other unexpected errors during UI update
+                print(f"(UI Log Console general error: {e}) {formatted_log_message}")
 
+        # Always print to the actual system console
         print(formatted_log_message)
         
     def toggle_lock_log(self, checked):
@@ -702,8 +841,11 @@ class RiftScopeApp(QMainWindow):
         self.gum_rift_ping_type_combo.setEnabled(False)
         self.dice_chest_ping_entry.setEnabled(False)
         self.dice_chest_ping_type_combo.setEnabled(False)
-        self.collection_enabled_checkbox.setEnabled(False)
+        self.automation_enabled_checkbox.setEnabled(False)
         self.calibrate_button.setEnabled(False)
+        if hasattr(self, 'calibrate_claw_skip_button'): self.calibrate_claw_skip_button.setEnabled(False)
+        if hasattr(self, 'calibrate_claw_claim_button'): self.calibrate_claw_claim_button.setEnabled(False)
+        if hasattr(self, 'calibrate_claw_start_button'): self.calibrate_claw_start_button.setEnabled(False)
         self.hatch_detection_enabled_checkbox.setEnabled(False) 
         self.hatch_username_entry.setEnabled(False)
         self.hatch_secret_ping_checkbox.setEnabled(False)
@@ -712,22 +854,22 @@ class RiftScopeApp(QMainWindow):
 
         self.update_status("🔍 Scanning started...")
 
-        # Start collection if enabled
-        if self.collection_enabled_checkbox.isChecked():
-            self.collection_enabled = True 
-            if self.teleport_coords:
-                self.update_status("🏁 Collection path enabled. Starting worker...")
+        # Start automation if enabled (formerly collection)
+        if self.automation_enabled_checkbox.isChecked():
+            self.automation_enabled = True
+            if self.teleport_coords or self.collection_manager.current_path == 'clawmachine': # Allow clawmachine path without teleport coords for now
+                self.update_status("🏁 Automation enabled. Starting worker...")
                 self.collection_running = True
                 self.collection_manager.collection_worker = Worker(self.collection_manager.run_collection_loop)
                 self.collection_manager.collection_worker.update_status_signal.connect(self.update_status)
                 self.collection_manager.collection_worker.start()
             else:
-                self.update_status("⚠️ Collection path enabled, but teleport button not calibrated. Skipping collection.")
-                QMessageBox.warning(self, "Collection Warning",
-                                   "Collection path is enabled, but the teleport button position hasn't been calibrated.\n"
-                                   "Please calibrate before starting if you want collection active.")
+                self.update_status("⚠️ Automation enabled, but teleport button not calibrated (required for non-Claw Machine paths). Skipping automation.")
+                QMessageBox.warning(self, "Automation Warning",
+                                   "Automation is enabled, but the teleport button position hasn't been calibrated.\n"
+                                   "This is required for paths that use teleport. Please calibrate if needed.")
         else:
-            self.collection_enabled = False
+            self.automation_enabled = False
             
     def stop_macro(self):
         """Stop the scanning process"""
@@ -787,8 +929,11 @@ class RiftScopeApp(QMainWindow):
         self.gum_rift_ping_type_combo.setEnabled(True)
         self.dice_chest_ping_entry.setEnabled(True)
         self.dice_chest_ping_type_combo.setEnabled(True)
-        self.collection_enabled_checkbox.setEnabled(True)
+        self.automation_enabled_checkbox.setEnabled(True)
         self.calibrate_button.setEnabled(True)
+        if hasattr(self, 'calibrate_claw_skip_button'): self.calibrate_claw_skip_button.setEnabled(True)
+        if hasattr(self, 'calibrate_claw_claim_button'): self.calibrate_claw_claim_button.setEnabled(True)
+        if hasattr(self, 'calibrate_claw_start_button'): self.calibrate_claw_start_button.setEnabled(True)
         self.hatch_detection_enabled_checkbox.setEnabled(True) 
         self.hatch_username_entry.setEnabled(True)
         self.hatch_secret_ping_checkbox.setEnabled(True)
@@ -830,6 +975,11 @@ class RiftScopeApp(QMainWindow):
 
         if self.test_running and self.test_worker and self.test_worker.isRunning():
             self.test_running = False
+
+        # Save configuration before exiting
+        if hasattr(self, 'config') and self.config:
+            self.update_status("Saving configuration before exiting...")
+            self.config.save()
 
         event.accept()
         
@@ -988,3 +1138,67 @@ class RiftScopeApp(QMainWindow):
             
         except Exception as e:
             self.update_status(f"Error in worker URL fetch: {str(e)}")
+
+    def update_path_selector(self):
+        """Update the path selector dropdown with available paths"""
+        if hasattr(self, 'automation_type_selector_combo') and hasattr(self.collection_manager, 'available_paths'):
+            self.automation_type_selector_combo.clear()
+            for path_id, path_data in self.collection_manager.available_paths.items():
+                path_name = path_data.get('name', path_id)
+                self.automation_type_selector_combo.addItem(path_name, path_id)
+                
+            # Set the current path if available
+            if self.collection_manager.current_path:
+                for i in range(self.automation_type_selector_combo.count()):
+                    if self.automation_type_selector_combo.itemData(i) == self.collection_manager.current_path:
+                        self.automation_type_selector_combo.setCurrentIndex(i)
+                        break
+            
+            # Connect signal only after populating to avoid triggering during setup
+            # Ensure we disconnect previous connection if any, to avoid multiple calls
+            try:
+                self.automation_type_selector_combo.currentIndexChanged.disconnect(self.on_automation_type_selected)
+            except TypeError:
+                pass # No connection existed
+            self.automation_type_selector_combo.currentIndexChanged.connect(self.on_automation_type_selected)
+
+    def update_automation_type_selector(self):
+        """Update the automation type selector dropdown with available paths."""
+        if hasattr(self, 'automation_type_selector_combo') and hasattr(self.collection_manager, 'available_paths'):
+            current_selection_id = None
+            if self.automation_type_selector_combo.count() > 0 and self.automation_type_selector_combo.currentIndex() != -1:
+                 current_selection_id = self.automation_type_selector_combo.itemData(self.automation_type_selector_combo.currentIndex())
+
+            self.automation_type_selector_combo.blockSignals(True)
+            self.automation_type_selector_combo.clear()
+            for path_id, path_data in self.collection_manager.available_paths.items():
+                path_name = path_data.get('name', path_id) # This will pick up the new "Claw Machine" name
+                self.automation_type_selector_combo.addItem(path_name, path_id)
+            
+            # Restore previous selection or select current_path from collection_manager
+            target_path_to_select = current_selection_id if current_selection_id else self.collection_manager.current_path
+            if target_path_to_select:
+                for i in range(self.automation_type_selector_combo.count()):
+                    if self.automation_type_selector_combo.itemData(i) == target_path_to_select:
+                        self.automation_type_selector_combo.setCurrentIndex(i)
+                        break
+            self.automation_type_selector_combo.blockSignals(False)
+            
+            # Connect signal only after populating to avoid triggering during setup
+            # and ensure it's connected only once.
+            try:
+                self.automation_type_selector_combo.currentIndexChanged.disconnect(self.on_automation_type_selected)
+            except TypeError:
+                pass # No connection existed
+            self.automation_type_selector_combo.currentIndexChanged.connect(self.on_automation_type_selected)
+            
+    def on_automation_type_selected(self, index):
+        """Handle selection of an automation type from the dropdown."""
+        if index >= 0 and not self.initializing: # Check if app is still initializing
+            path_id = self.automation_type_selector_combo.itemData(index)
+            if path_id and self.collection_manager.set_current_path(path_id):
+                self.update_status(f"Selected automation type: {self.automation_type_selector_combo.currentText()}")
+                # Config is saved by collection_manager.set_current_path
+            #else: #This case can be noisy if path_id is None during UI setup
+                #if path_id is not None: #Only log if it was a real attempt to set invalid path
+                    #self.update_status(f"Failed to set automation type to ID: {path_id}")
