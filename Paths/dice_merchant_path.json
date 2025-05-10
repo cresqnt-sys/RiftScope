@@ -1,0 +1,21 @@
+{
+    "name": "Dice Merchant Path",
+    "description": "Custom path recorded on 2025-05-08",
+    "actions": [
+        [
+            "w",
+            1859,
+            399
+        ],
+        [
+            "a",
+            1576,
+            517
+        ],
+        [
+            "w",
+            890,
+            0
+        ]
+    ]
+}

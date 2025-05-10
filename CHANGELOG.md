@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (starting from 1.0.0-Alpha).
 
+## [1.3.5-Stable] - 2025-05-09
+
+### Added
+- **Currency Updates Feature**:
+    - Added screenshot capability to track currency amounts
+    - Implemented delay setting for update frequency
+    - Added calibration area for currency display location
+    - Added Discord webhook integration for currency screenshots
+- **Ticket Collection Feature**:
+    - Added new "Ticket Collection" path for farming tickets
+    - Implemented "Open Cyber While Farming" option to spam the 'R' key during execution
+- **Merchant Auto Buy**:
+    - Added auto buy for all 3 shops
+- **UI Enhancement**:
+    - Added a Contributors section to the Credits tab
+    - Added "Digital" and "Manas" (for Path Creation) to the Contributors section
+
+### Changed
+- **Calibration Tab**: 
+    - Reworked the calibration tab to be more compact
+    - Improved layout with grid design for better space utilization
+    - Optimized spacing and reduced margins for a cleaner appearance
+- **Screenshot Handling**:
+    - Changed screenshot storage to save directly in the application data directory
+    - Improved webhook attachment handling for more reliable delivery
+
+### Fixed
+- Fixed "Open Cyber While Farming" checkbox visibility and state persistence
+- Resolved issues with webhook not properly sending screenshots as attachments
+- Fixed parameter order in the send_webhook method for proper file path handling
+
 ## [1.3.0-Stable] - 2025-05-07
 
 ### Added

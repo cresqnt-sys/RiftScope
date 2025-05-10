@@ -1,0 +1,31 @@
+{
+    "name": "Black Market Merchant Path",
+    "description": "Custom path recorded on 2025-05-08",
+    "actions": [
+        [
+            "s",
+            239,
+            378
+        ],
+        [
+            "a",
+            734,
+            389
+        ],
+        [
+            "s",
+            943,
+            360
+        ],
+        [
+            "d",
+            262,
+            790
+        ],
+        [
+            "s",
+            140,
+            0
+        ]
+    ]
+}
