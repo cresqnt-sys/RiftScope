@@ -10,6 +10,8 @@
 
 ---
 
+# Discontinued as of 06-05-2025. Thank you for your support.
+
 RiftScope is a user-friendly application for Windows made to monitor your Roblox logs for Bubble Gum Simulator Infinity. It watches for specific rare events, such as the appearance of a **Royal Chest** (🎁) or an **Aura Egg** (🥚), and sends a notification to your Discord webhook.
 
 JOIN THE OFFICAL AURA EGG HUNT AT: https://discord.gg/hFqmaFgscR
